@@ -1,14 +1,15 @@
 file
-main.py (Entry Point)
-models/element_model.py
-models/config_model.py
-views/base_view.py
-views/setup_tab.py
-views/define_tab.py
-views/analyze_tab.py
-views/verify_tab.py
-controllers/app_controller.py
-controllers/element_controller.py
-controllers/recognition_controller.py
-utils/image_processor.py
-utils/file_operations.py
+config/default_config.yaml
+config/user_config.yaml
+src/utils/config_manager.py
+src/utils/reference_manager.py
+src/utils/session_tracker.py
+src/models/ui_element.py
+src/automation/recognition.py
+src/automation/state_machine.py
+src/main.py
+src/simple_sender.py
+src/utils/config_facade.py
+src/utils/session_manager.py
+src/utils/config_sync.py
+config/ui_elements/*.yaml: Separated UI element definitions
