@@ -1,0 +1,104 @@
+session1:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the main.py (Entry Point). Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for main.py (Entry Point). Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to main.py (Entry Point). Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session2:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the models/element_model.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for models/element_model.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to models/element_model.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session3:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the models/config_model.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for models/config_model.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to models/config_model.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session4:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the views/base_view.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for views/base_view.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to views/base_view.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session5:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the views/setup_tab.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for views/setup_tab.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to views/setup_tab.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session6:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the views/define_tab.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for views/define_tab.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to views/define_tab.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session7:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the views/analyze_tab.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for views/analyze_tab.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to views/analyze_tab.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session8:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the views/verify_tab.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for views/verify_tab.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to views/verify_tab.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session9:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the controllers/app_controller.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for controllers/app_controller.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to controllers/app_controller.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session10:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the controllers/element_controller.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for controllers/element_controller.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to controllers/element_controller.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session11:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the controllers/recognition_controller.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for controllers/recognition_controller.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to controllers/recognition_controller.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session12:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the utils/image_processor.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for utils/image_processor.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to utils/image_processor.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+
+session13:
+  claude_url: https://claude.ai/project/0196b7f9-6e76-776a-8c6b-b8231944ae8e
+  name: Code Tasks
+  prompts:
+  - With reference to Instructions for Splitting unified_calibration.py assess the utils/file_operations.py. Briefly describe its purpose and how it fits into the overall project, the major functions or classes it contains. Do not refactor yet—just return your assessment.
+  - Based on your assessment, propose a detailed refactoring plan for utils/file_operations.py. Include specific improvements such as function extraction, renaming, logic simplification, or restructuring; explain how these changes improve maintainability or readability; and note any dependencies or potential side effects. Wait for my approval before proceeding.
+  - Apply the refactor to utils/file_operations.py. Output the complete refactored code in one block with minimal inline comments where necessary to explain any non-obvious changes. Do not modify other files or make assumptions about external dependencies unless instructed.
+

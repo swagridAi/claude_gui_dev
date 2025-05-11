@@ -1,0 +1,6 @@
+2025-05-11 09:19:34,190 - INFO - Logging initialized in logs\run_20250511_091934
+2025-05-11 09:19:34,190 - INFO - Starting Claude automation
+2025-05-11 09:19:34,206 - DEBUG - Loading default configuration from config/default_config.yaml
+2025-05-11 09:19:34,222 - DEBUG - Loading user configuration from config/user_config.yaml
+2025-05-11 09:19:34,331 - INFO - No existing session status file found at config/session_status.json
+2025-05-11 09:19:34,331 - ERROR - Session 'session1' not found in configuration

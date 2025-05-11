@@ -1,0 +1,14 @@
+file
+main.py (Entry Point)
+models/element_model.py
+models/config_model.py
+views/base_view.py
+views/setup_tab.py
+views/define_tab.py
+views/analyze_tab.py
+views/verify_tab.py
+controllers/app_controller.py
+controllers/element_controller.py
+controllers/recognition_controller.py
+utils/image_processor.py
+utils/file_operations.py

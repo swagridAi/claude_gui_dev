@@ -1,0 +1,91 @@
+# Claude GUI Automation - Default Configuration
+
+# Browser settings
+claude_url: "https://claude.ai"
+browser_profile: "C:\\Temp\\ClaudeProfile"
+
+# UI elements
+ui_elements:
+  prompt_box:
+    reference_paths:
+      - "assets/reference_images/prompt_box/prompt_box_1.png"
+      - "assets/reference_images/prompt_box/prompt_box_2.png"
+    region: [400, 700, 800, 300]
+    confidence: 0.7
+    click_coordinates: [800, 850]
+    use_coordinates_first: true
+    
+  send_button:
+    reference_paths:
+      - "assets/reference_images/send_button/send_button_1.png"
+      - "assets/reference_images/send_button/send_button_2.png"
+    region: [900, 700, 300, 300]
+    confidence: 0.7
+    click_coordinates: [1050, 850]
+    use_coordinates_first: true
+    
+  thinking_indicator:
+    reference_paths:
+      - "assets/reference_images/thinking_indicator/thinking_1.png"
+      - "assets/reference_images/thinking_indicator/thinking_2.png"
+    region: [500, 400, 400, 200]
+    confidence: 0.6
+    # No click coordinates for thinking indicator as it's typically not clicked
+    
+  response_area:
+    reference_paths: []
+    region: [300, 100, 800, 600]
+    confidence: 0.7
+    # No click coordinates for response area as it's typically not clicked
+    
+  extended_thought:
+    reference_paths:
+      - "assets/reference_images/extended_thought/extended_thought_1.png"
+    region: [280, 939, 621, 64]
+    confidence: 0.7
+    click_coordinates: [450, 970]
+    use_coordinates_first: true
+    
+  search_options_button:
+    reference_paths:
+      - "assets/reference_images/search_options_button/search_options_button_1.png"
+    region: [258, 711, 92, 86]
+    confidence: 0.7
+    click_coordinates: [290, 754]
+    use_coordinates_first: true
+
+# Automation settings
+automation_settings:
+  prefer_coordinates: true  # Global setting to prefer coordinates over visual
+
+prompts:
+  - "Summarize the latest AI trends."
+  - "Explain how reinforcement learning works."
+  - "Write a Python function that reverses a string."
+
+# Runtime settings
+max_retries: 3
+response_timeout: 60
+delay_between_prompts: 3
+debug: false
+
+# Retry settings
+retry_delay: 2         # Initial delay between retries in seconds
+max_retry_delay: 30    # Maximum delay between retries in seconds
+retry_jitter: 0.5      # Random jitter factor (0.5 means ±50%)
+retry_backoff: 1.5     # Exponential backoff multiplier
+
+# OCR settings
+ocr:
+  preprocess: true
+  contrast_enhance: true
+  denoise: true
+  engine: "tesseract"
+  config: "--psm 6"
+
+# Coordinate-based clicking settings
+coordinate_settings:
+  recalibrate_on_resolution_change: true
+  fallback_to_visual: true  # Fall back to visual recognition if coordinate clicking fails
+  visual_confirmation: false  # Whether to visually confirm after a coordinate click (slower but more reliable)
+  jitter: 2  # Random pixel jitter to add to coordinates for more human-like clicking
