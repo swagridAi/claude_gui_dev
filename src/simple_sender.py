@@ -12,11 +12,21 @@ import time
 import argparse
 import os
 import logging
-import yaml
-import pyautogui
 import sys
 from datetime import datetime
-import random
+
+# Import shared components
+from src.utils.browser_core import get_chrome_path, launch_browser as launch_browser_core, close_browser as close_browser_core
+from src.utils.config_base import ConfigBase
+from src.utils.human_input import HumanizedKeyboard
+from src.utils.constants import (
+    DEFAULT_SESSION_DELAY, 
+    DEFAULT_PROMPT_DELAY, 
+    DEFAULT_BROWSER_STARTUP_WAIT,
+    DEFAULT_LOGIN_WAIT,
+    PROGRESS_LOG_INTERVAL
+)
+
 
 # Set up logging
 def setup_logging():
@@ -38,47 +48,25 @@ def setup_logging():
     
     logging.info(f"Logging initialized. Log file: {log_file}")
 
-def load_config(config_path="config/user_config.yaml"):
-    """Load configuration from YAML file."""
-    try:
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        logging.info(f"Loaded configuration from {config_path}")
-        return config
-    except Exception as e:
-        logging.error(f"Error loading configuration: {e}")
+
+class SimpleSenderConfig(ConfigBase):
+    """Configuration management for Simple Sender."""
+    
+    def get_browser_config(self):
+        """Get browser-specific configuration."""
+        return {
+            'profile_dir': self.get("browser_profile"),
+            'chrome_path': self.get("chrome_path"),
+            'startup_wait': self.get("browser_launch_wait", DEFAULT_BROWSER_STARTUP_WAIT)
+        }
+    
+    def get_session_config(self, session_id):
+        """Get configuration for a specific session."""
+        sessions = self.get("sessions", {})
+        if session_id in sessions:
+            return sessions[session_id]
         return {}
 
-def get_chrome_path():
-    """Find Chrome browser path based on OS."""
-    import platform
-    
-    system = platform.system()
-    
-    if system == "Windows":
-        paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\Application\chrome.exe")
-        ]
-    elif system == "Darwin":  # macOS
-        paths = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        ]
-    else:  # Linux and others
-        paths = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium"
-        ]
-    
-    # Return the first path that exists
-    for path in paths:
-        if os.path.exists(path):
-            return path
-    
-    return None
 
 def launch_browser(url, profile_dir=None):
     """Launch Chrome browser with specified URL and profile."""
@@ -87,54 +75,25 @@ def launch_browser(url, profile_dir=None):
         logging.error("Chrome browser not found.")
         return False
     
-    if not profile_dir:
-        profile_dir = os.path.join(os.path.expanduser("~"), "ClaudeProfile")
-    
-    # Ensure profile directory exists
-    os.makedirs(profile_dir, exist_ok=True)
-    
-    cmd = [
-        chrome_path,
-        f"--user-data-dir={profile_dir}",
-        "--start-maximized",
-        "--disable-extensions",
-        url
-    ]
-    
-    try:
-        logging.info(f"Launching Chrome: {chrome_path}")
-        logging.info(f"Using profile: {profile_dir}")
-        logging.info(f"Navigating to: {url}")
-        
-        process = subprocess.Popen(cmd)
-        
-        # Check if process started successfully
-        if process.poll() is not None:
-            logging.error(f"Browser process exited with code {process.returncode}")
-            return False
-        
-        # Wait for browser to initialize
-        logging.info("Waiting for browser to initialize (10 seconds)")
-        time.sleep(10)
-        
-        return True
-    except Exception as e:
-        logging.error(f"Failed to launch browser: {e}")
-        return False
+    return launch_browser_core(url, profile_dir, chrome_path)
 
-def send_prompts(prompts, session_id=None, delay_between_prompts=300):
+
+def send_prompts(prompts, session_id=None, delay_between_prompts=DEFAULT_PROMPT_DELAY):
     """Send each prompt and press Enter."""
     if not prompts:
         logging.error("No prompts to send.")
         return
+    
+    # Initialize humanized keyboard with normal profile
+    keyboard = HumanizedKeyboard(profile='normal')
     
     # Log session information
     if session_id:
         logging.info(f"Running session: {session_id}")
         
     # Wait for page to fully load and for user to handle any login/captcha
-    logging.info("Waiting 15 seconds for page to load and for user to handle any login...")
-    time.sleep(15)
+    logging.info(f"Waiting {DEFAULT_LOGIN_WAIT} seconds for page to load and for user to handle any login...")
+    time.sleep(DEFAULT_LOGIN_WAIT)
     
     # Process each prompt
     for i, prompt in enumerate(prompts):
@@ -142,33 +101,18 @@ def send_prompts(prompts, session_id=None, delay_between_prompts=300):
         logging.info(f"Processing prompt {prompt_num}/{len(prompts)}")
         
         try:
-            # Clear any current content with Ctrl+A and Delete
-            pyautogui.hotkey('ctrl', 'a')
-            time.sleep(0.5)
-            pyautogui.press('delete')
-            time.sleep(0.5)
+            # Clear any current content
+            keyboard.clear_input()
             
-            # Type the prompt text character by character with random delays
+            # Type the prompt text with humanized timing
             logging.info(f"Typing prompt: {prompt[:50]}..." if len(prompt) > 50 else f"Typing prompt: {prompt}")
-            
-            # Type each character with a random delay
-            for char in prompt:
-                # Type the character
-                pyautogui.write(char)
-                
-                # Random delay between 0.02 and 0.1 seconds for more human-like typing
-                typing_delay = random.uniform(0.02, 0.1)
-                time.sleep(typing_delay)
-                
-                # Occasionally add a slightly longer pause (simulating thinking)
-                if random.random() < 0.05:  # 5% chance
-                    time.sleep(random.uniform(0.2, 0.5))
+            keyboard.type_text(prompt)
             
             time.sleep(1)
             
             # Press Enter to send
             logging.info("Pressing Enter to send prompt")
-            pyautogui.press('enter')
+            keyboard.send()
             
             # Wait for response (fixed time)
             wait_time = delay_between_prompts
@@ -177,7 +121,7 @@ def send_prompts(prompts, session_id=None, delay_between_prompts=300):
             # Log progress during the wait
             start_time = time.time()
             while time.time() - start_time < wait_time:
-                time.sleep(30)  # Check every 30 seconds
+                time.sleep(PROGRESS_LOG_INTERVAL)
                 elapsed = time.time() - start_time
                 remaining = wait_time - elapsed
                 if remaining > 0:
@@ -190,29 +134,11 @@ def send_prompts(prompts, session_id=None, delay_between_prompts=300):
     
     logging.info("All prompts processed.")
 
+
 def close_browser():
     """Close Chrome browser."""
-    try:
-        logging.info("Closing browser...")
-        import platform
-        
-        if platform.system() == "Windows":
-            subprocess.run(["taskkill", "/f", "/im", "chrome.exe"], 
-                          stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(["pkill", "-f", "chrome"], 
-                          stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-        
-        # Wait for browser to close
-        time.sleep(2)
-        logging.info("Browser closed.")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Error closing browser: {e}")
-        return False
+    return close_browser_core()
+
 
 def run_session(session_id, session_config, global_config, prompt_delay):
     """Run a single session from start to finish."""
@@ -221,7 +147,7 @@ def run_session(session_id, session_config, global_config, prompt_delay):
     # Get session URL and prompts
     session_url = session_config.get("claude_url", global_config.get("claude_url", "https://claude.ai"))
     session_prompts = session_config.get("prompts", [])
-    profile_dir = global_config.get("browser_profile")
+    browser_config = global_config.get_browser_config()
     
     if not session_prompts:
         logging.warning(f"No prompts found for session '{session_id}'. Skipping.")
@@ -235,12 +161,13 @@ def run_session(session_id, session_config, global_config, prompt_delay):
     success = False
     try:
         # Launch browser for this session
-        if not launch_browser(session_url, profile_dir):
+        if not launch_browser(session_url, browser_config.get('profile_dir')):
             logging.error(f"Failed to launch browser for session '{session_id}'.")
             return False
         
         # Send all prompts for this session
-        success = send_prompts(session_prompts, session_id, prompt_delay)
+        send_prompts(session_prompts, session_id, prompt_delay)
+        success = True
         
     except Exception as e:
         logging.error(f"Error in session '{session_id}': {e}")
@@ -253,12 +180,14 @@ def run_session(session_id, session_config, global_config, prompt_delay):
     logging.info(f"=== Session {session_id} {status} ===")
     return success
 
+
 def get_all_sessions(config):
     """Get all available sessions from the config."""
     sessions = config.get("sessions", {})
     if not sessions:
         logging.warning("No sessions defined in configuration file.")
     return list(sessions.keys())
+
 
 def main():
     # Set up logging first
@@ -269,8 +198,8 @@ def main():
     parser.add_argument("--config", help="Path to config file", default="config/user_config.yaml")
     parser.add_argument("--session", help="Specific session to run (default: run all)", default=None)
     parser.add_argument("--run-one", action="store_true", help="Run only the specified session, not all")
-    parser.add_argument("--delay", type=int, help="Delay between prompts in seconds", default=180)
-    parser.add_argument("--session-delay", type=int, help="Delay between sessions in seconds", default=10)
+    parser.add_argument("--delay", type=int, help="Delay between prompts in seconds", default=DEFAULT_PROMPT_DELAY)
+    parser.add_argument("--session-delay", type=int, help="Delay between sessions in seconds", default=DEFAULT_SESSION_DELAY)
     args = parser.parse_args()
     
     # Log startup information
@@ -278,10 +207,7 @@ def main():
     logging.info(f"Command line args: {args}")
     
     # Load configuration
-    config = load_config(args.config)
-    if not config:
-        logging.error("Failed to load configuration. Exiting.")
-        return 1
+    config = SimpleSenderConfig(args.config)
     
     # Determine which sessions to run
     sessions_to_run = []
@@ -329,7 +255,7 @@ def main():
     # Count valid sessions
     valid_sessions = []
     for session_id in sessions_to_run:
-        session_config = config.get("sessions", {}).get(session_id)
+        session_config = config.get_session_config(session_id)
         if not session_config:
             logging.warning(f"Session '{session_id}' not found in configuration. Skipping.")
             continue
@@ -344,7 +270,7 @@ def main():
     # Run each session with a separate browser instance
     results = {}
     for i, session_id in enumerate(valid_sessions):
-        session_config = config.get("sessions", {}).get(session_id, {})
+        session_config = config.get_session_config(session_id)
         
         # Run the session
         success = run_session(session_id, session_config, config, args.delay)
@@ -369,6 +295,7 @@ def main():
     
     logging.info("=== CLAUDE SIMPLE SENDER COMPLETED ===")
     return 0 if all(results.values()) else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

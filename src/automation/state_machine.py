@@ -2,6 +2,9 @@ from enum import Enum, auto
 import logging
 import time
 import random
+import functools
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
 from src.automation.browser import launch_browser, close_browser, refresh_page
 from src.automation.recognition import find_element
 from src.automation.interaction import click_element, send_text
@@ -10,6 +13,76 @@ from src.utils.logging_util import log_with_screenshot
 from src.utils.reference_manager import ReferenceImageManager
 from src.utils.region_manager import RegionManager
 
+
+# Inline utility classes for refactoring
+class AutomationConstants:
+    """Centralized timing constants for automation."""
+    BROWSER_INIT_WAIT = 5
+    BROWSER_STARTUP_WAIT = 10
+    PAGE_RELOAD_WAIT = 5
+    BROWSER_CLOSE_RETRY_WAIT = 2
+    PROMPT_WAIT_TIME = 300  # Fixed wait time for prompts (5 minutes)
+    
+    # Default retry settings
+    DEFAULT_MAX_RETRIES = 3
+    DEFAULT_RETRY_DELAY = 2
+    DEFAULT_MAX_RETRY_DELAY = 30
+    DEFAULT_RETRY_JITTER = 0.5
+    DEFAULT_RETRY_BACKOFF = 1.5
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry behavior."""
+    max_retries: int = AutomationConstants.DEFAULT_MAX_RETRIES
+    retry_delay: float = AutomationConstants.DEFAULT_RETRY_DELAY
+    max_retry_delay: float = AutomationConstants.DEFAULT_MAX_RETRY_DELAY
+    retry_jitter: float = AutomationConstants.DEFAULT_RETRY_JITTER
+    retry_backoff: float = AutomationConstants.DEFAULT_RETRY_BACKOFF
+
+
+class RetryHandler:
+    """Handles retry logic with exponential backoff and jitter."""
+    
+    def __init__(self, config: RetryConfig):
+        self.config = config
+    
+    def calculate_delay(self, attempt: int) -> float:
+        """Calculate delay for the given attempt number."""
+        current_delay = min(
+            self.config.retry_delay * (self.config.retry_backoff ** (attempt - 1)),
+            self.config.max_retry_delay
+        )
+        
+        # Add jitter to avoid thundering herd problem
+        jitter_factor = 1 + random.uniform(-self.config.retry_jitter, self.config.retry_jitter)
+        return current_delay * jitter_factor
+    
+    def wait(self, attempt: int, failure_type: 'FailureType') -> None:
+        """Wait for the calculated delay before retry."""
+        delay = self.calculate_delay(attempt)
+        logging.info(f"Waiting {delay:.2f} seconds before retry (attempt {attempt}, type: {failure_type})")
+        time.sleep(delay)
+
+
+def with_error_handling(func):
+    """Decorator for standardized error handling with screenshots."""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            # Log error with screenshot
+            log_with_screenshot(
+                f"Error in state {self.state.name}: {str(e)}", 
+                level=logging.ERROR,
+                stage_name=f"{self.state.name}_ERROR"
+            )
+            self._handle_error(e)
+            return None
+    return wrapper
+
+
 class AutomationState(Enum):
     INITIALIZE = auto()
     BROWSER_LAUNCH = auto()
@@ -17,14 +90,16 @@ class AutomationState(Enum):
     SEND_PROMPTS = auto()
     COMPLETE = auto()
     ERROR = auto()
-    RETRY = auto()  # New state for handling retries
+    RETRY = auto()
+
 
 class FailureType(Enum):
     """Types of failures that can occur during automation"""
-    UI_NOT_FOUND = auto()     # UI element not found
-    NETWORK_ERROR = auto()    # Network or connectivity issue
-    BROWSER_ERROR = auto()    # Browser crashed or not responding
-    UNKNOWN = auto()          # Unknown error type
+    UI_NOT_FOUND = auto()
+    NETWORK_ERROR = auto()
+    BROWSER_ERROR = auto()
+    UNKNOWN = auto()
+
 
 class SimpleAutomationMachine:
     def __init__(self, config):
@@ -32,22 +107,24 @@ class SimpleAutomationMachine:
         self.state = AutomationState.INITIALIZE
         self.prompts = config.get("prompts", [])
         self.current_prompt_index = 0
-        self.max_retries = config.get("max_retries", 3)
         self.retry_count = 0
         self.ui_elements = {}
         self.delay_between_prompts = config.get("delay_between_prompts", 3)
         self.failure_type = None
         self.last_error = None
-        self.retry_delay = config.get("retry_delay", 2)
-        self.max_retry_delay = config.get("max_retry_delay", 30)
-        self.retry_jitter = config.get("retry_jitter", 0.5)  # Random jitter percentage
-        self.retry_backoff = config.get("retry_backoff", 1.5)  # Exponential backoff multiplier
         self.reference_manager = ReferenceImageManager()
-        # Initialize region manager
         self.region_manager = RegionManager()
-        
-        # Add a new stage for detecting window positioning
         self.detected_window = False
+        
+        # Initialize retry configuration and handler
+        self.retry_config = RetryConfig(
+            max_retries=config.get("max_retries", AutomationConstants.DEFAULT_MAX_RETRIES),
+            retry_delay=config.get("retry_delay", AutomationConstants.DEFAULT_RETRY_DELAY),
+            max_retry_delay=config.get("max_retry_delay", AutomationConstants.DEFAULT_MAX_RETRY_DELAY),
+            retry_jitter=config.get("retry_jitter", AutomationConstants.DEFAULT_RETRY_JITTER),
+            retry_backoff=config.get("retry_backoff", AutomationConstants.DEFAULT_RETRY_BACKOFF)
+        )
+        self.retry_handler = RetryHandler(self.retry_config)
     
     def run(self):
         """Run the automation state machine until completion or error."""
@@ -60,114 +137,87 @@ class SimpleAutomationMachine:
         else:
             logging.error(f"Automation stopped with errors after sending {self.current_prompt_index} prompts.")
     
+    @with_error_handling
     def _execute_current_state(self):
         """Execute the current state and transition to the next state."""
-        try:
-            # Store the original state for logging
-            original_state = self.state
-            
-            # Log the state transition with screenshot
-            log_with_screenshot(
-                f"Entering state: {original_state.name}", 
-                level=logging.INFO,
-                stage_name=original_state.name
-            )
-            
-            if self.state == AutomationState.INITIALIZE:
-                self._handle_initialize()
-                
-            elif self.state == AutomationState.BROWSER_LAUNCH:
-                self._handle_browser_launch()
-                
-            elif self.state == AutomationState.WAIT_FOR_LOGIN:
-                self._handle_wait_for_login()
-                
-            elif self.state == AutomationState.SEND_PROMPTS:
-                self._handle_send_prompts()
-                    
-            elif self.state == AutomationState.RETRY:
-                self._handle_retry()
-            
-            # Log successful state completion with screenshot using the ORIGINAL state
-            log_with_screenshot(
-                f"Successfully completed state: {original_state.name}", 
-                level=logging.INFO,
-                stage_name=f"{original_state.name}_COMPLETE"
-            )
-            
-            # Reset retry count on successful state execution (only for non-retry states)
-            if original_state != AutomationState.RETRY:
-                self.retry_count = 0
-                
-        except Exception as e:
-            # Log error with screenshot
-            log_with_screenshot(
-                f"Error in state {self.state.name}: {str(e)}", 
-                level=logging.ERROR,
-                stage_name=f"{self.state.name}_ERROR"
-            )
-            self._handle_error(e)
+        original_state = self.state
+        
+        # Log the state transition with screenshot
+        log_with_screenshot(
+            f"Entering state: {original_state.name}", 
+            level=logging.INFO,
+            stage_name=original_state.name
+        )
+        
+        if self.state == AutomationState.INITIALIZE:
+            self._handle_initialize()
+        elif self.state == AutomationState.BROWSER_LAUNCH:
+            self._handle_browser_launch()
+        elif self.state == AutomationState.WAIT_FOR_LOGIN:
+            self._handle_wait_for_login()
+        elif self.state == AutomationState.SEND_PROMPTS:
+            self._handle_send_prompts()
+        elif self.state == AutomationState.RETRY:
+            self._handle_retry()
+        
+        # Log successful state completion with screenshot
+        log_with_screenshot(
+            f"Successfully completed state: {original_state.name}", 
+            level=logging.INFO,
+            stage_name=f"{original_state.name}_COMPLETE"
+        )
+        
+        # Reset retry count on successful state execution (only for non-retry states)
+        if original_state != AutomationState.RETRY:
+            self.retry_count = 0
 
     def _handle_initialize(self):
         """Initialize the automation process."""
         # Load UI elements from config
         for element_name, element_config in self.config.get("ui_elements", {}).items():
-            # Support both relative and absolute regions
-            region = element_config.get("region")
-            relative_region = element_config.get("relative_region")
-            parent = element_config.get("parent")
-            
-            self.ui_elements[element_name] = UIElement(
-                name=element_name,
-                reference_paths=element_config.get("reference_paths", []),
-                region=region,
-                relative_region=relative_region,
-                parent=parent,
-                confidence=element_config.get("confidence", 0.8),
-                click_coordinates=element_config.get("click_coordinates"),  # MISSING
-                use_coordinates_first=element_config.get("use_coordinates_first", True)  # MISSING
-            )
+            self._create_ui_element(element_name, element_config)
         self.state = AutomationState.BROWSER_LAUNCH
+    
+    def _create_ui_element(self, element_name: str, element_config: Dict[str, Any]) -> None:
+        """Create and store a UI element from configuration."""
+        self.ui_elements[element_name] = UIElement(
+            name=element_name,
+            reference_paths=element_config.get("reference_paths", []),
+            region=element_config.get("region"),
+            relative_region=element_config.get("relative_region"),
+            parent=element_config.get("parent"),
+            confidence=element_config.get("confidence", 0.8),
+            click_coordinates=element_config.get("click_coordinates"),
+            use_coordinates_first=element_config.get("use_coordinates_first", True)
+        )
 
     def _handle_browser_launch(self):
         """Launch the browser and navigate to Claude."""
         logging.info("Launching browser")
         
-        # Fix: Pass the entire config object as the second parameter
+        # Use the configuration object as expected by the browser module
         launch_browser(self.config.get("claude_url"), self.config)
         
-        # Wait for browser to launch and detect window position
-        time.sleep(5)
-        
-        # Try to detect window position
+        # Wait for browser to launch
+        time.sleep(AutomationConstants.BROWSER_INIT_WAIT)
+        self._detect_window_position()
+        self.state = AutomationState.WAIT_FOR_LOGIN
+    
+    def _detect_window_position(self) -> None:
+        """Try to detect window position and set anchor point."""
         window_rect = self.region_manager.detect_window_position("Claude")
         if window_rect:
             logging.info(f"Detected Claude window at {window_rect}")
-            # Set an anchor point at the top-left corner of the window
             self.region_manager.set_anchor_point("window_top_left", (window_rect[0], window_rect[1]))
             self.detected_window = True
         else:
             logging.warning("Could not detect Claude window position, using full screen")
-                
-        self.state = AutomationState.WAIT_FOR_LOGIN
     
     def _handle_wait_for_login(self):
         """Wait for the user to complete login."""
         logging.info("Waiting for login completion")
         # Skip any login checks and proceed directly to sending prompts
         self.state = AutomationState.SEND_PROMPTS
-        """
-        # Check if already logged in
-        logged_in_element = find_element(self.ui_elements["prompt_box"])
-        
-        if logged_in_element:
-            logging.info("Already logged in")
-            self.state = AutomationState.SEND_PROMPTS
-        else:
-            input("Please complete login/CAPTCHA and press Enter to continue...")
-            self.state = AutomationState.SEND_PROMPTS
-        """
-        return
     
     def _handle_send_prompts(self):
         """Send all prompts in sequence."""
@@ -175,7 +225,6 @@ class SimpleAutomationMachine:
             logging.info("All prompts have been sent")
             log_with_screenshot("All prompts completed", stage_name="PROMPTS_COMPLETED")
             self.state = AutomationState.COMPLETE
-            # Close browser when all prompts are sent
             self.close_browser()
             return
         
@@ -183,104 +232,99 @@ class SimpleAutomationMachine:
         logging.info(f"Sending prompt {self.current_prompt_index + 1}/{len(self.prompts)}: {current_prompt[:50]}...")
         log_with_screenshot(f"Before sending prompt {self.current_prompt_index + 1}", stage_name="BEFORE_PROMPT")
         
-        try:
-            # Determine which prompt box to use (initial or final)
-            if self.current_prompt_index == 0:
-                logging.info("First prompt - using initial_prompt_box")
-                prompt_element = self.ui_elements.get("Initial_prompt_box")
-                prompt_element_name = "Initial_prompt_box"
-            else:
-                logging.info(f"Subsequent prompt - using final_prompt_box")
-                prompt_element = self.ui_elements.get("final_prompt_box")
-                prompt_element_name = "final_prompt_box"
-            
-            # Check if the required element exists
-            if not prompt_element:
-                log_with_screenshot(f"{prompt_element_name} element not defined", level=logging.ERROR, 
-                                stage_name=f"{prompt_element_name.upper()}_NOT_FOUND")
-                self.failure_type = FailureType.UI_NOT_FOUND
-                raise Exception(f"{prompt_element_name} element not defined")
-            
-            # DIRECT COORDINATES APPROACH: Use coordinates directly if available
-            if prompt_element.click_coordinates and (prompt_element.use_coordinates_first or 
-                                                self.config.get("automation_settings", {}).get("prefer_coordinates", True)):
-                from src.automation.interaction import click_at_coordinates
-                x, y = prompt_element.click_coordinates
-                logging.info(f"Using direct coordinates for {prompt_element_name}: ({x}, {y})")
-                success = click_at_coordinates(x, y, element_name=prompt_element_name)
-                
-                if not success:
-                    logging.warning(f"Direct coordinate click failed, falling back to visual recognition")
-                    # Fall back to visual recognition if direct click fails
-                    success = click_element(prompt_element)
-            else:
-                # VISUAL RECOGNITION APPROACH: Use traditional element finding if no coordinates
-                logging.info(f"Using visual recognition to find {prompt_element_name}")
-                success = click_element(prompt_element)
-            
-            # Check if the click was successful
-            if not success:
-                log_with_screenshot(f"Failed to click {prompt_element_name}", level=logging.ERROR, 
-                                stage_name=f"{prompt_element_name.upper()}_CLICK_FAILED")
-                self.failure_type = FailureType.UI_NOT_FOUND
-                raise Exception(f"Failed to click {prompt_element_name}")
-            
-            log_with_screenshot(f"After clicking {prompt_element_name}", 
-                            stage_name=f"AFTER_{prompt_element_name.upper()}_CLICK")
-            
-            # Send the prompt text
-            send_text(current_prompt)
-            log_with_screenshot("After typing prompt", stage_name="AFTER_TYPE_PROMPT")
-            
-            # Press Enter instead of clicking send button
-            from pyautogui import press
-            press("enter")
-            logging.info("Pressed Enter to send prompt")
-            log_with_screenshot("Prompt sent using Enter key", stage_name="PROMPT_SENT_ENTER")
-            
-            # Wait fixed 5 minutes (300 seconds) after sending prompt
-            fixed_wait_time = 300  # 5 minutes in seconds
-            logging.info(f"Waiting {fixed_wait_time} seconds (5 minutes) after sending prompt...")
-            
-            # Log progress during the fixed wait time at 30-second intervals
-            start_time = time.time()
-            while time.time() - start_time < fixed_wait_time:
-                time.sleep(30)  # Check every 30 seconds
-                waited_so_far = time.time() - start_time
-                remaining = fixed_wait_time - waited_so_far
-                if remaining > 0:
-                    logging.info(f"Still waiting: {int(remaining)} seconds remaining in 5-minute wait period...")
-            
-            logging.info("Completed mandatory 5-minute wait period after sending prompt")
-            log_with_screenshot("Completed 5-minute wait period", stage_name="WAIT_COMPLETED")
-            
-            # Check for message limit reached notification
-            limit_element = self.ui_elements.get("limit_reached")
-            if limit_element:
-                # For limit checking, prefer coordinates first is less important than accuracy
-                # So we'll use visual recognition here
-                limit_reached = find_element(limit_element)
-                if limit_reached:
-                    logging.warning("Message limit reached, cannot send more prompts")
-                    log_with_screenshot("Message limit reached", stage_name="LIMIT_REACHED", region=limit_reached)
-                    self.state = AutomationState.COMPLETE
-                    return
-            
-            # Move to next prompt
-            self.current_prompt_index += 1
-            
-        except Exception as e:
-            logging.error(f"Error sending prompt: {e}")
-            # Set failure type if not already set
-            if not self.failure_type:
-                self.failure_type = FailureType.UNKNOWN
-            self.last_error = str(e)
-            raise
+        # Determine which prompt box to use (initial or final)
+        prompt_element = self._get_prompt_element()
+        
+        if not prompt_element:
+            log_with_screenshot("No prompt element defined", level=logging.ERROR, 
+                            stage_name="NO_PROMPT_ELEMENT")
+            self.failure_type = FailureType.UI_NOT_FOUND
+            raise Exception("No prompt element defined")
+        
+        # Use coordinates or visual recognition
+        if not self._click_prompt_element(prompt_element):
+            log_with_screenshot(f"Failed to click {prompt_element.name}", level=logging.ERROR, 
+                            stage_name=f"{prompt_element.name.upper()}_CLICK_FAILED")
+            self.failure_type = FailureType.UI_NOT_FOUND
+            raise Exception(f"Failed to click {prompt_element.name}")
+        
+        log_with_screenshot(f"After clicking {prompt_element.name}", 
+                        stage_name=f"AFTER_{prompt_element.name.upper()}_CLICK")
+        
+        # Send the prompt text
+        send_text(current_prompt)
+        log_with_screenshot("After typing prompt", stage_name="AFTER_TYPE_PROMPT")
+        
+        # Press Enter to send
+        from pyautogui import press
+        press("enter")
+        logging.info("Pressed Enter to send prompt")
+        log_with_screenshot("Prompt sent using Enter key", stage_name="PROMPT_SENT_ENTER")
+        
+        # Wait fixed time after sending prompt
+        self._wait_for_response()
+        
+        # Check for message limit
+        if self._check_message_limit():
+            self.state = AutomationState.COMPLETE
+            return
+        
+        # Move to next prompt
+        self.current_prompt_index += 1
+    
+    def _get_prompt_element(self) -> Optional[UIElement]:
+        """Get the appropriate prompt element based on current prompt index."""
+        if self.current_prompt_index == 0:
+            logging.info("First prompt - using initial_prompt_box")
+            return self.ui_elements.get("Initial_prompt_box")
+        else:
+            logging.info("Subsequent prompt - using final_prompt_box")
+            return self.ui_elements.get("final_prompt_box")
+    
+    def _click_prompt_element(self, prompt_element: UIElement) -> bool:
+        """Click the prompt element using coordinates or visual recognition."""
+        if prompt_element.click_coordinates and (prompt_element.use_coordinates_first or 
+                                            self.config.get("automation_settings", {}).get("prefer_coordinates", True)):
+            from src.automation.interaction import click_at_coordinates
+            x, y = prompt_element.click_coordinates
+            logging.info(f"Using direct coordinates for {prompt_element.name}: ({x}, {y})")
+            return click_at_coordinates(x, y, element_name=prompt_element.name)
+        else:
+            logging.info(f"Using visual recognition to find {prompt_element.name}")
+            return click_element(prompt_element)
+    
+    def _wait_for_response(self) -> None:
+        """Wait for Claude to respond with the configured delay."""
+        wait_time = AutomationConstants.PROMPT_WAIT_TIME
+        logging.info(f"Waiting {wait_time} seconds (5 minutes) after sending prompt...")
+        
+        # Log progress during the wait time
+        start_time = time.time()
+        while time.time() - start_time < wait_time:
+            time.sleep(30)  # Check every 30 seconds
+            waited_so_far = time.time() - start_time
+            remaining = wait_time - waited_so_far
+            if remaining > 0:
+                logging.info(f"Still waiting: {int(remaining)} seconds remaining in 5-minute wait period...")
+        
+        logging.info("Completed mandatory 5-minute wait period after sending prompt")
+        log_with_screenshot("Completed 5-minute wait period", stage_name="WAIT_COMPLETED")
+    
+    def _check_message_limit(self) -> bool:
+        """Check if message limit has been reached."""
+        limit_element = self.ui_elements.get("limit_reached")
+        if limit_element:
+            # Use visual recognition for limit checking
+            limit_reached = find_element(limit_element)
+            if limit_reached:
+                logging.warning("Message limit reached, cannot send more prompts")
+                log_with_screenshot("Message limit reached", stage_name="LIMIT_REACHED", region=limit_reached)
+                return True
+        return False
 
     def _handle_error(self, error):
         """Handle errors and decide whether to retry."""
         logging.error(f"Error in state {self.state}: {error}")
-        log_with_screenshot(f"Error: {error}")
         
         # Analyze error and set failure type if not already set
         if not self.failure_type:
@@ -289,30 +333,29 @@ class SimpleAutomationMachine:
         self.last_error = str(error)
         self.retry_count += 1
         
-        # If the failure is due to UI element not found, try refreshing references
+        # Try refreshing references for UI not found errors
         if self.failure_type == FailureType.UI_NOT_FOUND:
-            element_name = self._extract_element_name_from_error(str(error))
-            if element_name and element_name in self.ui_elements:
-                logging.info(f"Attempting to refresh reference for {element_name}")
-                self.reference_manager.update_stale_references(
-                    self.ui_elements[element_name], 
-                    self.config
-                )
+            self._handle_ui_not_found_error(error)
         
-        if self.retry_count <= self.max_retries:
-            logging.info(f"Retry {self.retry_count}/{self.max_retries}")
+        if self.retry_count <= self.retry_config.max_retries:
+            logging.info(f"Retry {self.retry_count}/{self.retry_config.max_retries}")
             self.state = AutomationState.RETRY
         else:
-            logging.error(f"Max retries reached, stopping automation")
+            logging.error("Max retries reached, stopping automation")
             self.state = AutomationState.ERROR
     
+    def _handle_ui_not_found_error(self, error: Exception) -> None:
+        """Handle UI not found errors by refreshing references."""
+        element_name = self._extract_element_name_from_error(str(error))
+        if element_name and element_name in self.ui_elements:
+            logging.info(f"Attempting to refresh reference for {element_name}")
+            self.reference_manager.update_stale_references(
+                self.ui_elements[element_name], 
+                self.config
+            )
+    
     def set_preserve_config(self, preserve):
-        """
-        Set whether to preserve configuration when saving.
-        
-        Args:
-            preserve: Boolean flag indicating whether to preserve config
-        """
+        """Set whether to preserve configuration when saving."""
         self.preserve_config = preserve
         logging.debug(f"Set preserve_config to {preserve}")
 
@@ -320,20 +363,20 @@ class SimpleAutomationMachine:
         """Handle the retry logic based on the failure type."""
         logging.info(f"Handling retry attempt {self.retry_count} for {self.failure_type}")
         
-        # Calculate exponential backoff with jitter
-        current_delay = min(
-            self.retry_delay * (self.retry_backoff ** (self.retry_count - 1)),
-            self.max_retry_delay
-        )
-        
-        # Add some random jitter to avoid thundering herd problem
-        jitter_factor = 1 + random.uniform(-self.retry_jitter, self.retry_jitter)
-        delay = current_delay * jitter_factor
-        
-        logging.info(f"Waiting {delay:.2f} seconds before retry...")
-        time.sleep(delay)
+        # Use the retry handler for standardized delay calculation
+        self.retry_handler.wait(self.retry_count, self.failure_type)
         
         # Apply recovery strategy based on failure type
+        self._apply_recovery_strategy()
+        
+        # Reset failure type
+        self.failure_type = None
+        
+        # Go back to sending prompts
+        self.state = AutomationState.SEND_PROMPTS
+    
+    def _apply_recovery_strategy(self) -> None:
+        """Apply the appropriate recovery strategy based on failure type."""
         if self.failure_type == FailureType.UI_NOT_FOUND:
             self._recover_from_ui_not_found()
         elif self.failure_type == FailureType.NETWORK_ERROR:
@@ -342,12 +385,6 @@ class SimpleAutomationMachine:
             self._recover_from_browser_error()
         else:
             self._recover_from_unknown_error()
-        
-        # Reset failure type
-        self.failure_type = None
-        
-        # Go back to sending prompts
-        self.state = AutomationState.SEND_PROMPTS
     
     def _recover_from_ui_not_found(self):
         """Recovery strategy for UI element not found."""
@@ -356,7 +393,7 @@ class SimpleAutomationMachine:
         # Try refreshing the page
         logging.info("Refreshing page...")
         refresh_page()
-        time.sleep(5)  # Wait for page to reload
+        time.sleep(AutomationConstants.PAGE_RELOAD_WAIT)
         
         # Check if we're still logged in
         logged_in_element = find_element(self.ui_elements["prompt_box"])
@@ -368,7 +405,7 @@ class SimpleAutomationMachine:
         """Recovery strategy for network errors."""
         logging.info("Recovering from network error...")
         
-        # Try refreshing the page
+        # Try refreshing the page with longer wait
         logging.info("Refreshing page...")
         refresh_page()
         time.sleep(7)  # Wait longer for network issues
@@ -379,10 +416,10 @@ class SimpleAutomationMachine:
         
         # Close and relaunch browser
         self.close_browser()
-        time.sleep(2)
+        time.sleep(AutomationConstants.BROWSER_CLOSE_RETRY_WAIT)
         logging.info("Relaunching browser...")
         launch_browser(self.config.get("claude_url"))
-        time.sleep(5)
+        time.sleep(AutomationConstants.BROWSER_INIT_WAIT)
         
         # Wait for login
         self.state = AutomationState.WAIT_FOR_LOGIN
@@ -393,15 +430,15 @@ class SimpleAutomationMachine:
         
         # Try a page refresh first
         refresh_page()
-        time.sleep(5)
+        time.sleep(AutomationConstants.PAGE_RELOAD_WAIT)
         
-        # If that doesn't work after a couple of tries, restart the browser
+        # If multiple failures, restart the browser
         if self.retry_count > 2:
             logging.info("Multiple failures, restarting browser...")
             self.close_browser()
-            time.sleep(2)
+            time.sleep(AutomationConstants.BROWSER_CLOSE_RETRY_WAIT)
             launch_browser(self.config.get("claude_url"))
-            time.sleep(5)
+            time.sleep(AutomationConstants.BROWSER_INIT_WAIT)
             self.state = AutomationState.WAIT_FOR_LOGIN
     
     def _classify_error(self, error):
@@ -451,7 +488,7 @@ class SimpleAutomationMachine:
             
         # Retry if first attempt fails
         logging.warning("First attempt to close browser failed, retrying...")
-        time.sleep(2)
+        time.sleep(AutomationConstants.BROWSER_CLOSE_RETRY_WAIT)
         
         # Second attempt with force
         from pyautogui import hotkey

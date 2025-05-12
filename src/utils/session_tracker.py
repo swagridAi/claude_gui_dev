@@ -1,13 +1,21 @@
+#!/usr/bin/env python3
 # src/utils/session_tracker.py
 import os
 import json
 import logging
 from datetime import datetime
+from contextlib import contextmanager
+from typing import Dict, Any, Optional
+
+# Module-level constants
+DEFAULT_TRACKER_FILE = "config/session_status.json"
+JSON_INDENT = 2
+ISO_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 class SessionTracker:
     """Tracks which sessions have been completed and when."""
     
-    def __init__(self, tracker_file="config/session_status.json"):
+    def __init__(self, tracker_file: str = DEFAULT_TRACKER_FILE):
         """
         Initialize the session tracker.
         
@@ -18,34 +26,68 @@ class SessionTracker:
         self.session_status = {}
         self._load_status()
     
-    def _load_status(self):
-        """Load the session status from file."""
-        if os.path.exists(self.tracker_file):
-            try:
-                with open(self.tracker_file, 'r') as f:
-                    self.session_status = json.load(f)
-                logging.debug(f"Loaded session status from {self.tracker_file}")
-            except Exception as e:
-                logging.error(f"Error loading session status: {e}")
-                self.session_status = {}
-        else:
-            logging.info(f"No existing session status file found at {self.tracker_file}")
-            # Create the directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.tracker_file), exist_ok=True)
-            self.session_status = {}
-    
-    def _save_status(self):
-        """Save the session status to file."""
+    @contextmanager
+    def _safe_operation(self, operation_name: str, fallback_value=False):
+        """Context manager for safe operations with consistent error handling."""
         try:
-            with open(self.tracker_file, 'w') as f:
-                json.dump(self.session_status, f, indent=2)
-            logging.debug(f"Saved session status to {self.tracker_file}")
-            return True
+            yield
         except Exception as e:
-            logging.error(f"Error saving session status: {e}")
-            return False
+            logging.error(f"Error in {operation_name}: {e}")
+            return fallback_value
     
-    def is_completed(self, session_id):
+    def _load_json(self) -> Dict[str, Any]:
+        """Load JSON data from tracker file."""
+        if not os.path.exists(self.tracker_file):
+            logging.info(f"No existing session status file found at {self.tracker_file}")
+            os.makedirs(os.path.dirname(self.tracker_file), exist_ok=True)
+            return {}
+        
+        with open(self.tracker_file, 'r') as f:
+            data = json.load(f)
+        logging.debug(f"Loaded session status from {self.tracker_file}")
+        return data
+    
+    def _save_json(self, data: Dict[str, Any]) -> bool:
+        """Save JSON data to tracker file."""
+        with open(self.tracker_file, 'w') as f:
+            json.dump(data, f, indent=JSON_INDENT)
+        logging.debug(f"Saved session status to {self.tracker_file}")
+        return True
+    
+    def _ensure_session_exists(self, session_id: str) -> None:
+        """Ensure session entry exists in status dictionary."""
+        if session_id not in self.session_status:
+            self.session_status[session_id] = {}
+    
+    def _add_to_history(self, session_id: str) -> None:
+        """Add current session state to history before modification."""
+        session = self.session_status[session_id]
+        
+        if 'history' not in session:
+            session['history'] = []
+        
+        if session.get('completed'):
+            history_entry = {
+                'completed': session.get('completed', False),
+                'success': session.get('success', False),
+                'completion_time': session.get('completion_time', ''),
+                'notes': session.get('notes', '')
+            }
+            session['history'].append(history_entry)
+    
+    def _load_status(self) -> None:
+        """Load the session status from file."""
+        with self._safe_operation('loading session status'):
+            self.session_status = self._load_json()
+    
+    def _save_status(self) -> bool:
+        """Save the session status to file."""
+        with self._safe_operation('saving session status') as context:
+            result = self._save_json(self.session_status)
+            return result
+        return False
+    
+    def is_completed(self, session_id: str) -> bool:
         """
         Check if a session has been completed.
         
@@ -57,7 +99,7 @@ class SessionTracker:
         """
         return session_id in self.session_status and self.session_status[session_id].get('completed', False)
     
-    def mark_completed(self, session_id, success=True, notes=None):
+    def mark_completed(self, session_id: str, success: bool = True, notes: Optional[str] = None) -> bool:
         """
         Mark a session as completed.
         
@@ -69,19 +111,20 @@ class SessionTracker:
         Returns:
             bool: True if status was successfully saved
         """
-        if session_id not in self.session_status:
-            self.session_status[session_id] = {}
-        
-        self.session_status[session_id].update({
-            'completed': True,
-            'success': success,
-            'completion_time': datetime.now().isoformat(),
-            'notes': notes or ""
-        })
-        
-        return self._save_status()
+        with self._safe_operation('marking session completed') as context:
+            self._ensure_session_exists(session_id)
+            
+            self.session_status[session_id].update({
+                'completed': True,
+                'success': success,
+                'completion_time': datetime.now().strftime(ISO_FORMAT),
+                'notes': notes or ""
+            })
+            
+            return self._save_status()
+        return False
     
-    def reset_session(self, session_id):
+    def reset_session(self, session_id: str) -> bool:
         """
         Reset a session's completion status.
         
@@ -91,32 +134,24 @@ class SessionTracker:
         Returns:
             bool: True if status was successfully saved
         """
-        if session_id in self.session_status:
-            # Archive the previous run info if it exists
-            if 'history' not in self.session_status[session_id]:
-                self.session_status[session_id]['history'] = []
-                
-            # Add current status to history before resetting
-            if self.session_status[session_id].get('completed'):
-                history_entry = {
-                    'completed': self.session_status[session_id].get('completed', False),
-                    'success': self.session_status[session_id].get('success', False),
-                    'completion_time': self.session_status[session_id].get('completion_time', ''),
-                    'notes': self.session_status[session_id].get('notes', '')
-                }
-                self.session_status[session_id]['history'].append(history_entry)
+        with self._safe_operation('resetting session') as context:
+            if session_id not in self.session_status:
+                return False
+            
+            self._add_to_history(session_id)
             
             # Reset current status
-            self.session_status[session_id]['completed'] = False
-            self.session_status[session_id]['success'] = False
-            if 'completion_time' in self.session_status[session_id]:
-                del self.session_status[session_id]['completion_time']
-            self.session_status[session_id]['notes'] = "Reset on " + datetime.now().isoformat()
+            session = self.session_status[session_id]
+            session['completed'] = False
+            session['success'] = False
+            session['notes'] = f"Reset on {datetime.now().strftime(ISO_FORMAT)}"
+            if 'completion_time' in session:
+                del session['completion_time']
             
             return self._save_status()
         return False
     
-    def reset_all_sessions(self):
+    def reset_all_sessions(self) -> bool:
         """
         Reset completion status for all sessions.
         
@@ -127,7 +162,7 @@ class SessionTracker:
             self.reset_session(session_id)
         return True
     
-    def get_session_status(self, session_id=None):
+    def get_session_status(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get the status of a specific session or all sessions.
         
@@ -141,7 +176,7 @@ class SessionTracker:
             return self.session_status.get(session_id, {})
         return self.session_status
     
-    def get_completed_sessions(self):
+    def get_completed_sessions(self) -> list:
         """
         Get a list of all completed sessions.
         
@@ -151,7 +186,7 @@ class SessionTracker:
         return [session_id for session_id in self.session_status
                 if self.session_status[session_id].get('completed', False)]
     
-    def get_pending_sessions(self):
+    def get_pending_sessions(self) -> list:
         """
         Get a list of all sessions that are not completed.
         

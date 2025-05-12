@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Configuration module for the simple sender.
+Configuration facade for the simple sender module.
 
-Provides a simplified interface to the Claude automation configuration system
-with support for caching, validation, and session management.
+Provides a simplified interface to the more complex configuration system
+while maintaining compatibility with existing configuration files.
 """
 
 import os
@@ -12,126 +12,26 @@ import copy
 import time
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple, Union, Set, Callable, TypedDict, cast
+from typing import List, Dict, Any, Optional, Tuple, Union, Set, Callable
 from dataclasses import dataclass
-from functools import wraps
-from contextlib import contextmanager
-
-# ===== MODULE 1: Data Models =====
-# In a multi-file implementation, these would be in models.py
-
-@dataclass
-class SessionConfig:
-    """Session configuration model with typed attributes."""
-    id: str
-    name: str
-    url: str
-    prompts: List[str]
-    delay: int = 180
-    
-    @classmethod
-    def from_dict(cls, session_id: str, data: Dict[str, Any]) -> 'SessionConfig':
-        """Create SessionConfig from dictionary data."""
-        return cls(
-            id=session_id,
-            name=data.get("name", session_id),
-            url=data.get("claude_url", "https://claude.ai"),
-            prompts=data.get("prompts", []),
-            delay=data.get("delay_between_prompts", 180)
-        )
 
 
-@dataclass
-class BrowserConfig:
-    """Browser configuration model with typed attributes."""
-    profile_dir: str
-    chrome_path: Optional[str] = None
-    startup_delay: int = 10
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'BrowserConfig':
-        """Create BrowserConfig from dictionary data."""
-        profile = data.get("browser_profile")
-        if not profile:
-            profile = os.path.join(os.path.expanduser("~"), "ClaudeProfile")
-            
-        return cls(
-            profile_dir=profile,
-            chrome_path=data.get("chrome_path"),
-            startup_delay=data.get("browser_launch_wait", 10)
-        )
+# Configuration defaults
+class ConfigDefaults:
+    """Centralized configuration default values."""
+    CACHE_TTL = 60
+    BROWSER_LAUNCH_WAIT = 10
+    DELAY_BETWEEN_PROMPTS = 180
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2.0
+    MAX_RETRY_DELAY = 30.0
+    RETRY_JITTER = 0.5
+    RETRY_BACKOFF = 1.5
+    CLAUDE_URL = "https://claude.ai"
+    BROWSER_PROFILE_DIRNAME = "ClaudeProfile"
 
 
-@dataclass
-class RetryConfig:
-    """Retry configuration model with typed attributes."""
-    max_retries: int = 3
-    retry_delay: float = 2.0
-    max_retry_delay: float = 30.0
-    retry_jitter: float = 0.5
-    retry_backoff: float = 1.5
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'RetryConfig':
-        """Create RetryConfig from dictionary data."""
-        return cls(
-            max_retries=data.get("max_retries", 3),
-            retry_delay=data.get("retry_delay", 2.0),
-            max_retry_delay=data.get("max_retry_delay", 30.0),
-            retry_jitter=data.get("retry_jitter", 0.5),
-            retry_backoff=data.get("retry_backoff", 1.5)
-        )
-
-
-@dataclass
-class VisualConfig:
-    """Visual verification configuration model."""
-    enabled: bool = True
-    template_dir: str = "templates"
-    confidence_threshold: float = 0.8
-    max_wait_time: int = 300
-    check_interval: float = 2.0
-    template_matching_method: str = "cv2.TM_CCOEFF_NORMED"
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'VisualConfig':
-        """Create VisualConfig from dictionary data."""
-        visual_config = data.get("visual_verification", {})
-        return cls(
-            enabled=visual_config.get("enabled", True),
-            template_dir=visual_config.get("template_dir", "templates"),
-            confidence_threshold=visual_config.get("confidence_threshold", 0.8),
-            max_wait_time=visual_config.get("max_wait_time", 300),
-            check_interval=visual_config.get("check_interval", 2.0),
-            template_matching_method=visual_config.get("template_matching_method", "cv2.TM_CCOEFF_NORMED")
-        )
-
-
-class ValidationResult:
-    """Result of a validation operation with detailed error information."""
-    
-    def __init__(self, valid: bool = True, errors: Optional[List[str]] = None):
-        self.valid = valid
-        self.errors = errors or []
-    
-    def __bool__(self):
-        return self.valid
-    
-    def add_error(self, error: str):
-        """Add an error message and mark validation as failed."""
-        self.errors.append(error)
-        self.valid = False
-    
-    def merge(self, other: 'ValidationResult'):
-        """Merge another validation result into this one."""
-        if not other.valid:
-            self.valid = False
-            self.errors.extend(other.errors)
-
-
-# ===== MODULE 2: Custom Exceptions =====
-# In a multi-file implementation, these would be in exceptions.py
-
+# Custom exceptions for better error handling
 class ConfigError(Exception):
     """Base exception for configuration errors."""
     pass
@@ -150,213 +50,148 @@ class ValidationError(ConfigError):
         super().__init__(message)
 
 
-class ConfigValidationError(ConfigError):
-    """Detailed validation error with field information."""
-    def __init__(self, field: str, message: str, details: Optional[List[str]] = None):
-        self.field = field
-        self.details = details or []
-        self.message = message
-        super().__init__(f"{field}: {message}")
-
-
-# ===== MODULE 3: Validation Functions =====
-# In a multi-file implementation, these would be in validation.py
-
-class ConfigValidator:
-    """Centralized validation logic for configuration objects."""
+# Validation helper
+class ValidationHelper:
+    """Helper class for common validation patterns."""
     
     @staticmethod
-    def validate_prompts(prompts: List[Any]) -> ValidationResult:
-        """
-        Validate a list of prompts.
+    def validate_list_items(items: List[Any], item_type: type, name: str) -> Tuple[bool, List[str]]:
+        """Validate that all items in a list are of the expected type and not empty."""
+        errors = []
         
-        Args:
-            prompts: List of prompts to validate
-            
-        Returns:
-            ValidationResult with validation outcome
-        """
-        result = ValidationResult()
+        if not items:
+            errors.append(f"Empty {name} list")
+            return False, errors
         
-        if not prompts:
-            result.add_error("Empty prompts list")
-            return result
+        for i, item in enumerate(items):
+            if not isinstance(item, item_type):
+                errors.append(f"{name.capitalize()} {i+1} is not a {item_type.__name__}")
+            elif item_type == str and not item.strip():
+                errors.append(f"{name.capitalize()} {i+1} is empty")
         
-        for i, prompt in enumerate(prompts):
-            if not isinstance(prompt, str):
-                result.add_error(f"Prompt {i+1} is not a string")
-            elif not prompt.strip():
-                result.add_error(f"Prompt {i+1} is empty")
-        
-        return result
+        return len(errors) == 0, errors
     
     @staticmethod
-    def validate_session_config(session_id: str, config_data: Dict[str, Any]) -> ValidationResult:
-        """
-        Validate session configuration.
+    def validate_optional_field(value: Any, field_name: str, expected_type: type, 
+                               additional_check: Optional[Callable] = None) -> List[str]:
+        """Validate an optional field."""
+        errors = []
         
-        Args:
-            session_id: Session identifier
-            config_data: Session configuration data
-            
-        Returns:
-            ValidationResult with validation outcome
-        """
-        result = ValidationResult()
+        if value is not None:
+            if not isinstance(value, expected_type):
+                errors.append(f"{field_name} must be a {expected_type.__name__}, got {type(value).__name__}")
+            elif additional_check and not additional_check(value):
+                errors.append(f"Invalid {field_name}: {value}")
         
-        # Check essential fields
-        if not config_data:
-            result.add_error(f"Empty configuration for session '{session_id}'")
-            return result
-            
-        # Validate prompts
-        prompts = config_data.get("prompts", [])
-        if not prompts:
-            result.add_error(f"No prompts defined for session '{session_id}'")
-        else:
-            prompt_validation = ConfigValidator.validate_prompts(prompts)
-            result.merge(prompt_validation)
-        
-        # Validate URL
-        url = config_data.get("claude_url")
-        if url and not isinstance(url, str):
-            result.add_error(f"URL must be a string, got {type(url).__name__}")
-        elif url and not url.startswith(("http://", "https://")):
-            result.add_error(f"Invalid URL format: {url}")
-        
-        # Validate delay
-        delay = config_data.get("delay_between_prompts")
-        if delay is not None:
-            if not isinstance(delay, (int, float)):
-                result.add_error(f"Delay must be a number, got {type(delay).__name__}")
-            elif delay < 0:
-                result.add_error(f"Delay cannot be negative: {delay}")
-        
-        return result
+        return errors
+
+
+# Common helper functions
+def _get_nested_config(config: Dict[str, Any], key: str, default: Any = None) -> Any:
+    """Get nested configuration value using dot notation."""
+    if "." in key:
+        parts = key.split(".")
+        value = config
+        for part in parts:
+            if isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return default
+        return value
+    return config.get(key, default)
+
+
+def _load_yaml_file(file_path: str) -> Optional[Dict[str, Any]]:
+    """Load YAML file with error handling."""
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                import yaml
+                return yaml.safe_load(f) or {}
+        return None
+    except Exception as e:
+        logging.error(f"Error loading YAML file {file_path}: {e}")
+        return None
+
+
+def _save_yaml_file(file_path: str, data: Dict[str, Any]) -> bool:
+    """Save data to YAML file with error handling."""
+    try:
+        import yaml
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False)
+        return True
+    except Exception as e:
+        logging.error(f"Error saving YAML file {file_path}: {e}")
+        return False
+
+
+# Domain models for typed configuration access
+@dataclass
+class SessionConfig:
+    """Session configuration model with typed attributes."""
+    id: str
+    name: str
+    url: str
+    prompts: List[str]
+    delay: int = ConfigDefaults.DELAY_BETWEEN_PROMPTS
     
-    @staticmethod
-    def validate_browser_config(config_data: Dict[str, Any]) -> ValidationResult:
-        """
-        Validate browser configuration.
-        
-        Args:
-            config_data: Browser configuration data
+    @classmethod
+    def from_dict(cls, session_id: str, data: Dict[str, Any]) -> 'SessionConfig':
+        """Create SessionConfig from dictionary data."""
+        return cls(
+            id=session_id,
+            name=data.get("name", session_id),
+            url=data.get("claude_url", ConfigDefaults.CLAUDE_URL),
+            prompts=data.get("prompts", []),
+            delay=data.get("delay_between_prompts", ConfigDefaults.DELAY_BETWEEN_PROMPTS)
+        )
+
+
+@dataclass
+class BrowserConfig:
+    """Browser configuration model with typed attributes."""
+    profile_dir: str
+    chrome_path: Optional[str] = None
+    startup_delay: int = ConfigDefaults.BROWSER_LAUNCH_WAIT
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'BrowserConfig':
+        """Create BrowserConfig from dictionary data."""
+        profile = data.get("browser_profile")
+        if not profile:
+            profile = os.path.join(os.path.expanduser("~"), ConfigDefaults.BROWSER_PROFILE_DIRNAME)
             
-        Returns:
-            ValidationResult with validation outcome
-        """
-        result = ValidationResult()
-        
-        # Validate chrome_path
-        chrome_path = config_data.get("chrome_path")
-        if chrome_path and not isinstance(chrome_path, str):
-            result.add_error(f"Chrome path must be a string, got {type(chrome_path).__name__}")
-        elif chrome_path and not os.path.exists(chrome_path):
-            result.add_error(f"Chrome path does not exist: {chrome_path}")
-        
-        # Validate browser_profile
-        profile = config_data.get("browser_profile")
-        if profile and not isinstance(profile, str):
-            result.add_error(f"Browser profile must be a string, got {type(profile).__name__}")
-        
-        # Validate startup_wait
-        startup_wait = config_data.get("browser_launch_wait")
-        if startup_wait is not None:
-            if not isinstance(startup_wait, (int, float)):
-                result.add_error(f"Browser launch wait must be a number, got {type(startup_wait).__name__}")
-            elif startup_wait < 0:
-                result.add_error(f"Browser launch wait cannot be negative: {startup_wait}")
-        
-        return result
+        return cls(
+            profile_dir=profile,
+            chrome_path=data.get("chrome_path"),
+            startup_delay=data.get("browser_launch_wait", ConfigDefaults.BROWSER_LAUNCH_WAIT)
+        )
 
 
-# ===== MODULE 4: Cache Management =====
-# In a multi-file implementation, these would be in cache.py
-
-class CacheManager:
-    """Manages caching of configuration values."""
+@dataclass
+class RetryConfig:
+    """Retry configuration model with typed attributes."""
+    max_retries: int = ConfigDefaults.MAX_RETRIES
+    retry_delay: float = ConfigDefaults.RETRY_DELAY
+    max_retry_delay: float = ConfigDefaults.MAX_RETRY_DELAY
+    retry_jitter: float = ConfigDefaults.RETRY_JITTER
+    retry_backoff: float = ConfigDefaults.RETRY_BACKOFF
     
-    def __init__(self, ttl: int = 60):
-        """
-        Initialize the cache manager.
-        
-        Args:
-            ttl: Default time-to-live in seconds for cache entries
-        """
-        self._cache = {}
-        self._timestamps = {}
-        self._default_ttl = ttl
-    
-    def is_valid(self, key: str) -> bool:
-        """Check if a cached item is still valid."""
-        if key not in self._cache or key not in self._timestamps:
-            return False
-        age = time.time() - self._timestamps[key]
-        return age < self._default_ttl
-    
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get a value from cache if it exists and is valid."""
-        if self.is_valid(key):
-            return self._cache[key]
-        return default
-    
-    def set(self, key: str, value: Any) -> None:
-        """Store a value in cache with timestamp."""
-        self._cache[key] = value
-        self._timestamps[key] = time.time()
-    
-    def invalidate(self, key: Optional[str] = None) -> None:
-        """Invalidate specific cache key or entire cache."""
-        if key:
-            self._cache.pop(key, None)
-            self._timestamps.pop(key, None)
-        else:
-            self._cache.clear()
-            self._timestamps.clear()
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'RetryConfig':
+        """Create RetryConfig from dictionary data."""
+        return cls(
+            max_retries=data.get("max_retries", ConfigDefaults.MAX_RETRIES),
+            retry_delay=data.get("retry_delay", ConfigDefaults.RETRY_DELAY),
+            max_retry_delay=data.get("max_retry_delay", ConfigDefaults.MAX_RETRY_DELAY),
+            retry_jitter=data.get("retry_jitter", ConfigDefaults.RETRY_JITTER),
+            retry_backoff=data.get("retry_backoff", ConfigDefaults.RETRY_BACKOFF)
+        )
 
 
-def cached_method(ttl: Optional[int] = None):
-    """
-    Decorator for caching method results.
-    
-    Args:
-        ttl: Optional override for cache time-to-live in seconds
-        
-    Returns:
-        Decorated method with caching
-    """
-    def decorator(method):
-        @wraps(method)
-        def wrapper(self, *args, **kwargs):
-            # Generate a cache key based on method name and arguments
-            key_parts = [method.__name__]
-            key_parts.extend(str(arg) for arg in args)
-            key_parts.extend(f"{k}={v}" for k, v in sorted(kwargs.items()))
-            cache_key = "_".join(key_parts)
-            
-            # Get cache manager from instance
-            if not hasattr(self, '_cache'):
-                # Create cache manager if it doesn't exist
-                self._cache = CacheManager(ttl or 60)
-            
-            # Check if value is in cache
-            cached_value = self._cache.get(cache_key)
-            if cached_value is not None:
-                return cached_value
-            
-            # Call the original method
-            result = method(self, *args, **kwargs)
-            
-            # Cache the result
-            self._cache.set(cache_key, result)
-            return result
-        return wrapper
-    return decorator
-
-
-# ===== MODULE 5: Fallback Implementations =====
-# In a multi-file implementation, these would be in fallbacks.py
-
+# Simplified fallback implementations for reduced coupling
 class SimpleConfigManager:
     """Simple fallback config manager when main one is unavailable."""
     
@@ -367,37 +202,23 @@ class SimpleConfigManager:
     
     def _load_config(self) -> None:
         """Load configuration from file."""
-        try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, 'r') as f:
-                    import yaml  # Local import to avoid global dependency
-                    self.config = yaml.safe_load(f) or {}
-                    logging.info(f"Loaded configuration from {self.config_path}")
-            else:
-                logging.warning(f"Configuration file not found: {self.config_path}")
-                self.config = create_default_simple_config()
-        except Exception as e:
-            logging.error(f"Error loading configuration: {e}")
+        loaded_config = _load_yaml_file(self.config_path)
+        if loaded_config is not None:
+            self.config = loaded_config
+            logging.info(f"Loaded configuration from {self.config_path}")
+        else:
+            logging.warning(f"Configuration file not found: {self.config_path}")
             self.config = create_default_simple_config()
     
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value with dot notation support."""
-        if "." in key:
-            parts = key.split(".")
-            value = self.config
-            for part in parts:
-                if isinstance(value, dict) and part in value:
-                    value = value[part]
-                else:
-                    return default
-            return value
-        return self.config.get(key, default)
+        return _get_nested_config(self.config, key, default)
     
     def is_in_session_mode(self) -> bool:
         """Stub for compatibility with ConfigManager."""
         return False
     
-    def enter_session_mode(self, session_id: Optional[str] = None) -> None:
+    def enter_session_mode(self) -> None:
         """Stub for compatibility with ConfigManager."""
         pass
     
@@ -407,14 +228,7 @@ class SimpleConfigManager:
     
     def save(self) -> bool:
         """Save configuration to file."""
-        try:
-            import yaml  # Local import to avoid global dependency
-            with open(self.config_path, 'w') as f:
-                yaml.dump(self.config, f, default_flow_style=False)
-            return True
-        except Exception as e:
-            logging.error(f"Error saving configuration: {e}")
-            return False
+        return _save_yaml_file(self.config_path, self.config)
 
 
 class SimpleSessionTracker:
@@ -492,32 +306,489 @@ class SimpleSessionTracker:
         return False
 
 
-def create_default_simple_config() -> Dict[str, Any]:
-    """
-    Create a default configuration suitable for simple sender.
+# Validation functions using ValidationHelper
+def validate_prompts(prompts: List[Any]) -> Tuple[bool, List[str]]:
+    """Validate a list of prompts and return whether they're valid."""
+    return ValidationHelper.validate_list_items(prompts, str, "prompts")
+
+
+def validate_session_config(session_id: str, config_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """Validate session configuration."""
+    errors = []
     
-    Returns:
-        Default configuration dictionary
+    # Check essential fields
+    if not config_data:
+        errors.append(f"Empty configuration for session '{session_id}'")
+        return False, errors
+        
+    # Validate prompts
+    prompts = config_data.get("prompts", [])
+    if not prompts:
+        errors.append(f"No prompts defined for session '{session_id}'")
+    else:
+        valid, prompt_errors = validate_prompts(prompts)
+        if not valid:
+            errors.extend(prompt_errors)
+    
+    # Validate URL
+    url = config_data.get("claude_url")
+    url_errors = ValidationHelper.validate_optional_field(
+        url, "URL", str,
+        additional_check=lambda x: x.startswith(("http://", "https://"))
+    )
+    errors.extend(url_errors)
+    
+    # Validate delay
+    delay = config_data.get("delay_between_prompts")
+    delay_errors = ValidationHelper.validate_optional_field(
+        delay, "Delay", (int, float),
+        additional_check=lambda x: x >= 0
+    )
+    errors.extend(delay_errors)
+    
+    return len(errors) == 0, errors
+
+
+def validate_browser_config(config_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    """Validate browser configuration."""
+    errors = []
+    
+    # Validate chrome_path
+    chrome_path = config_data.get("chrome_path")
+    path_errors = ValidationHelper.validate_optional_field(
+        chrome_path, "Chrome path", str,
+        additional_check=lambda x: os.path.exists(x)
+    )
+    if path_errors and chrome_path:
+        errors.append(f"Chrome path does not exist: {chrome_path}")
+    
+    # Validate browser_profile
+    profile = config_data.get("browser_profile")
+    errors.extend(ValidationHelper.validate_optional_field(profile, "Browser profile", str))
+    
+    # Validate startup_wait
+    startup_wait = config_data.get("browser_launch_wait")
+    errors.extend(ValidationHelper.validate_optional_field(
+        startup_wait, "Browser launch wait", (int, float),
+        additional_check=lambda x: x >= 0
+    ))
+    
+    return len(errors) == 0, errors
+
+
+# Main configuration facade class
+class SimpleConfigFacade:
     """
+    A simplified configuration interface for the simple sender module.
+    Acts as a facade over the more complex ConfigManager, providing
+    domain-specific methods for common configuration operations.
+    """
+    
+    def __init__(self, config_path: Optional[str] = None, config_manager=None, 
+                 session_tracker=None, preserve_original: bool = True, 
+                 strict_mode: bool = False, cache_ttl: int = ConfigDefaults.CACHE_TTL):
+        """
+        Initialize the configuration facade.
+        
+        Args:
+            config_path: Path to configuration file (optional)
+            config_manager: Optional ConfigManager instance
+            session_tracker: Optional SessionTracker instance
+            preserve_original: Whether to preserve original config when saving
+            strict_mode: Whether to raise exceptions on validation errors
+            cache_ttl: Cache time-to-live in seconds
+        """
+        self.config_path = config_path or "config/user_config.yaml"
+        self.preserve_original = preserve_original
+        self.strict_mode = strict_mode
+        self.cache_ttl = cache_ttl
+        
+        # Initialize caching system
+        self._cache = {}
+        self._cache_timestamps = {}
+        
+        # Initialize the underlying configuration manager
+        if config_manager:
+            self.config_manager = config_manager
+        else:
+            try:
+                from src.utils.config_manager import ConfigManager
+                self.config_manager = ConfigManager(self.config_path)
+            except ImportError:
+                logging.warning("Main ConfigManager not available, using fallback implementation")
+                self.config_manager = SimpleConfigManager(self.config_path)
+        
+        # Initialize session tracker for progress monitoring
+        if session_tracker:
+            self.session_tracker = session_tracker
+        else:
+            try:
+                from src.utils.session_tracker import SessionTracker
+                tracker_path = os.path.join(os.path.dirname(self.config_path), "session_status.json")
+                self.session_tracker = SessionTracker(tracker_path)
+            except ImportError:
+                logging.warning("Main SessionTracker not available, using fallback implementation")
+                tracker_path = os.path.join(os.path.dirname(self.config_path), "simple_session_status.json")
+                self.session_tracker = SimpleSessionTracker(tracker_path)
+
+    # Cache management methods
+    def _is_cache_valid(self, key: str) -> bool:
+        """Check if a cached item is still valid."""
+        if key not in self._cache or key not in self._cache_timestamps:
+            return False
+        age = time.time() - self._cache_timestamps[key]
+        return age < self.cache_ttl
+
+    def _cache_value(self, key: str, value: Any) -> None:
+        """Store a value in cache with timestamp."""
+        self._cache[key] = value
+        self._cache_timestamps[key] = time.time()
+
+    def invalidate_cache(self, key: Optional[str] = None) -> None:
+        """Invalidate specific cache key or entire cache."""
+        if key:
+            self._cache.pop(key, None)
+            self._cache_timestamps.pop(key, None)
+        else:
+            self._cache.clear()
+            self._cache_timestamps.clear()
+
+    def get_config_with_validation(self, key: str, validator_func: Callable, 
+                                  default: Any = None) -> Any:
+        """
+        Get configuration with consistent validation and error handling.
+        
+        Args:
+            key: Configuration key
+            validator_func: Function that validates configuration value
+            default: Default value if key not found or validation fails
+            
+        Returns:
+            Validated configuration value or default
+            
+        Raises:
+            ValidationError: If validation fails and strict_mode is enabled
+        """
+        cache_key = f"validated_{key}"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+            
+        try:
+            value = self.config_manager.get(key, default)
+            valid, errors = validator_func(value)
+            
+            if not valid:
+                if self.strict_mode:
+                    raise ValidationError(errors)
+                logging.warning(f"Invalid configuration for {key}: {', '.join(errors)}")
+                return default
+                
+            self._cache_value(cache_key, value)
+            return value
+        except Exception as e:
+            if not isinstance(e, ValidationError):
+                logging.error(f"Error accessing configuration {key}: {e}")
+            if self.strict_mode:
+                raise
+            return default
+
+    def get_all_sessions(self) -> Dict[str, Dict[str, Any]]:
+        """Get a dictionary of all available sessions."""
+        cache_key = "all_sessions"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+            
+        sessions = self.config_manager.get("sessions", {})
+        self._cache_value(cache_key, sessions)
+        return sessions
+
+    def get_session_ids(self) -> List[str]:
+        """Get a list of all available session IDs."""
+        return list(self.get_all_sessions().keys())
+
+    def get_session_config(self, session_id: str) -> Union[SessionConfig, Dict[str, Any]]:
+        """
+        Get the configuration for a specific session.
+        
+        Args:
+            session_id: The session identifier
+            
+        Returns:
+            SessionConfig object or empty dict if not found
+            
+        Raises:
+            SessionConfigError: If session config is invalid and strict_mode is enabled
+        """
+        # Check cache first
+        cache_key = f"session_{session_id}"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+        
+        # Handle default session specially
+        if session_id == "default":
+            config = self._get_default_session_config()
+            self._cache_value(cache_key, config)
+            return config
+        
+        # Get session data
+        session_data = self.config_manager.get("sessions", {}).get(session_id, {})
+        
+        # Validate session configuration
+        valid, errors = validate_session_config(session_id, session_data)
+        
+        if not valid:
+            if self.strict_mode:
+                raise SessionConfigError(f"Invalid session '{session_id}': {', '.join(errors)}")
+            logging.warning(f"Using default values for invalid session '{session_id}': {', '.join(errors)}")
+            return {}
+        
+        # Create SessionConfig and cache
+        try:
+            config = SessionConfig.from_dict(session_id, session_data)
+            self._cache_value(cache_key, config)
+            return config
+        except Exception as e:
+            logging.error(f"Error creating SessionConfig for '{session_id}': {e}")
+            if self.strict_mode:
+                raise
+            return session_data  # Return raw data as fallback
+
+    def _get_default_session_config(self) -> SessionConfig:
+        """Create a default session configuration using global settings."""
+        prompts = self.config_manager.get("prompts", [])
+        url = self.config_manager.get("claude_url", ConfigDefaults.CLAUDE_URL)
+        delay = self.config_manager.get("delay_between_prompts", ConfigDefaults.DELAY_BETWEEN_PROMPTS)
+        
+        return SessionConfig(
+            id="default",
+            name="Default Session",
+            url=url,
+            prompts=prompts,
+            delay=delay
+        )
+
+    def validate_session(self, session_id: str) -> Tuple[bool, str]:
+        """
+        Validate a session configuration and return whether it's valid.
+        
+        Args:
+            session_id: The session identifier
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Check if session exists
+        if session_id != "default" and session_id not in self.get_session_ids():
+            return False, f"Session '{session_id}' not found in configuration"
+        
+        # For default session, check global prompts
+        if session_id == "default":
+            prompts = self.config_manager.get("prompts", [])
+            if not prompts:
+                return False, "No prompts defined in global configuration"
+            
+            # Validate prompts
+            is_valid, errors = validate_prompts(prompts)
+            if not is_valid:
+                return False, f"Invalid global prompts: {', '.join(errors)}"
+                
+            return True, ""
+        
+        # Get session configuration
+        session_data = self.config_manager.get("sessions", {}).get(session_id, {})
+        
+        # Validate session configuration
+        valid, errors = validate_session_config(session_id, session_data)
+        if not valid:
+            return False, f"Invalid session '{session_id}': {', '.join(errors)}"
+        
+        return True, ""
+
+    def is_valid_session(self, session_id: str) -> bool:
+        """Check if a session is valid."""
+        valid, _ = self.validate_session(session_id)
+        return valid
+
+    def _get_config_value(self, path: str, session_id: Optional[str] = None, 
+                         default: Any = None, session_attr: Optional[str] = None) -> Any:
+        """Generic method to get configuration values with session support."""
+        cache_key = f"{path}_{session_id or 'global'}"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+            
+        if session_id and session_id != "default":
+            # Try to get session-specific value first
+            session_config = self.get_session_config(session_id)
+            if isinstance(session_config, SessionConfig) and session_attr:
+                value = getattr(session_config, session_attr)
+                if value is not None:
+                    self._cache_value(cache_key, value)
+                    return value
+            elif isinstance(session_config, dict):
+                value = session_config.get(path)
+                if value is not None:
+                    self._cache_value(cache_key, value)
+                    return value
+        
+        # Fall back to global value
+        value = self.config_manager.get(path, default)
+        self._cache_value(cache_key, value)
+        return value
+
+    def get_url(self, session_id: Optional[str] = None) -> str:
+        """Get the Claude URL for a session or the global default."""
+        return self._get_config_value("claude_url", session_id, ConfigDefaults.CLAUDE_URL, "url")
+
+    def get_prompts(self, session_id: Optional[str] = None) -> List[str]:
+        """Get the prompts for a session or global prompts."""
+        return self._get_config_value("prompts", session_id, [], "prompts")
+        
+    def get_global_prompts(self) -> List[str]:
+        """Get global prompts defined at the root level."""
+        return self.config_manager.get("prompts", [])
+
+    def get_browser_config(self) -> BrowserConfig:
+        """Get browser configuration."""
+        cache_key = "browser_config"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+            
+        # Get all config that might be needed for browser configuration
+        config_data = {
+            "browser_profile": self.config_manager.get("browser_profile"),
+            "chrome_path": self.config_manager.get("chrome_path"),
+            "browser_launch_wait": self.config_manager.get("browser_launch_wait", ConfigDefaults.BROWSER_LAUNCH_WAIT)
+        }
+        
+        # Validate browser configuration
+        valid, errors = validate_browser_config(config_data)
+        if not valid and self.strict_mode:
+            raise ValidationError(errors)
+        elif not valid:
+            logging.warning(f"Invalid browser configuration: {', '.join(errors)}. Using defaults.")
+        
+        browser_config = BrowserConfig.from_dict(config_data)
+        self._cache_value(cache_key, browser_config)
+        return browser_config
+
+    def get_retry_settings(self) -> RetryConfig:
+        """Get retry settings."""
+        cache_key = "retry_config"
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key]
+            
+        # Get all retry-related config
+        config_data = {
+            "max_retries": self.config_manager.get("max_retries", ConfigDefaults.MAX_RETRIES),
+            "retry_delay": self.config_manager.get("retry_delay", ConfigDefaults.RETRY_DELAY),
+            "max_retry_delay": self.config_manager.get("max_retry_delay", ConfigDefaults.MAX_RETRY_DELAY),
+            "retry_jitter": self.config_manager.get("retry_jitter", ConfigDefaults.RETRY_JITTER),
+            "retry_backoff": self.config_manager.get("retry_backoff", ConfigDefaults.RETRY_BACKOFF)
+        }
+        
+        retry_config = RetryConfig.from_dict(config_data)
+        self._cache_value(cache_key, retry_config)
+        return retry_config
+
+    def get_delay_between_prompts(self, session_id: Optional[str] = None) -> int:
+        """Get the delay between prompts for a session or global default."""
+        return self._get_config_value("delay_between_prompts", session_id, ConfigDefaults.DELAY_BETWEEN_PROMPTS, "delay")
+
+    def get_session_name(self, session_id: str) -> str:
+        """Get the human-readable name for a session."""
+        if session_id == "default":
+            return "Default Session"
+            
+        session_config = self.get_session_config(session_id)
+        if isinstance(session_config, SessionConfig):
+            return session_config.name
+        elif isinstance(session_config, dict):
+            return session_config.get("name", session_id)
+        return session_id
+
+    # Session tracking methods
+    def is_session_complete(self, session_id: str) -> bool:
+        """Check if a session has been marked as complete."""
+        return self.session_tracker.is_completed(session_id)
+
+    def mark_session_complete(self, session_id: str, success: bool = True, 
+                              notes: Optional[str] = None) -> bool:
+        """Mark a session as complete."""
+        return self.session_tracker.mark_completed(session_id, success, notes)
+
+    def reset_session(self, session_id: str) -> bool:
+        """Reset a session's completion status."""
+        return self.session_tracker.reset_session(session_id)
+
+    def get_incomplete_sessions(self) -> List[str]:
+        """Get a list of sessions that haven't been completed."""
+        all_sessions = self.get_all_sessions()
+        return [s for s in all_sessions if not self.is_session_complete(s)]
+
+    def get_session_status(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get status information for a session or all sessions."""
+        if hasattr(self.session_tracker, 'get_session_status'):
+            # Use main SessionTracker implementation
+            return self.session_tracker.get_session_status(session_id)
+        elif isinstance(self.session_tracker, SimpleSessionTracker):
+            # Use fallback implementation
+            if session_id:
+                return self.session_tracker.session_status.get(session_id, {})
+            else:
+                return self.session_tracker.session_status
+        else:
+            # Unknown implementation, return empty result
+            return {} if session_id else {}
+
+    def save(self) -> bool:
+        """Save any changes to the configuration."""
+        # Set preservation mode if needed
+        if self.preserve_original and hasattr(self.config_manager, 'is_in_session_mode'):
+            if not self.config_manager.is_in_session_mode():
+                self.config_manager.enter_session_mode()
+        
+        # Save configuration
+        result = self.config_manager.save()
+        
+        # Exit session mode if we entered it
+        if self.preserve_original and hasattr(self.config_manager, 'is_in_session_mode'):
+            if self.config_manager.is_in_session_mode():
+                self.config_manager.exit_session_mode()
+            
+        return result
+    
+    # Factory methods
+    @classmethod
+    def create(cls, config_path: Optional[str] = None, strict_mode: bool = False) -> 'SimpleConfigFacade':
+        """Factory method to create a properly configured instance."""
+        instance = cls(config_path, strict_mode=strict_mode)
+        
+        # Preload commonly used configurations to prime the cache
+        try:
+            instance.get_browser_config()
+            instance.get_retry_settings()
+            instance.get_session_ids()
+            instance.get_global_prompts()
+        except Exception as e:
+            logging.warning(f"Error preloading configuration: {e}")
+        
+        return instance
+
+
+def create_default_simple_config() -> Dict[str, Any]:
+    """Create a default configuration suitable for simple sender."""
     return {
-        "claude_url": "https://claude.ai",
-        "browser_profile": os.path.join(os.path.expanduser("~"), "ClaudeProfile"),
-        "delay_between_prompts": 180,
-        "max_retries": 3,
-        "retry_delay": 2,
-        "max_retry_delay": 30,
-        "retry_jitter": 0.5,
-        "retry_backoff": 1.5,
+        "claude_url": ConfigDefaults.CLAUDE_URL,
+        "browser_profile": os.path.join(os.path.expanduser("~"), ConfigDefaults.BROWSER_PROFILE_DIRNAME),
+        "delay_between_prompts": ConfigDefaults.DELAY_BETWEEN_PROMPTS,
+        "max_retries": ConfigDefaults.MAX_RETRIES,
+        "retry_delay": ConfigDefaults.RETRY_DELAY,
+        "max_retry_delay": ConfigDefaults.MAX_RETRY_DELAY,
+        "retry_jitter": ConfigDefaults.RETRY_JITTER,
+        "retry_backoff": ConfigDefaults.RETRY_BACKOFF,
         "prompts": [
             "Hello, Claude! This is a test prompt from the simple sender."
-        ],
-        "visual_verification": {
-            "enabled": True,
-            "template_dir": "templates",
-            "confidence_threshold": 0.8,
-            "max_wait_time": 300,
-            "check_interval": 2.0
-        }
+        ]
     }
 
 
@@ -525,7 +796,7 @@ def resolve_session_priority(available_sessions: List[str],
                              specified_session: Optional[str] = None, 
                              run_one: bool = False,
                              skip_completed: bool = True,
-                             config: Optional['ConfigFacade'] = None) -> List[str]:
+                             config: Optional[SimpleConfigFacade] = None) -> List[str]:
     """
     Determine which sessions to run and in what order.
     
@@ -534,7 +805,7 @@ def resolve_session_priority(available_sessions: List[str],
         specified_session: Specific session to prioritize (optional)
         run_one: Whether to run only one session
         skip_completed: Whether to skip completed sessions
-        config: ConfigFacade instance for checking completion status
+        config: SimpleConfigFacade instance for checking completion status
         
     Returns:
         Ordered list of session IDs to run
@@ -587,542 +858,5 @@ def resolve_session_priority(available_sessions: List[str],
     return sessions_to_run
 
 
-# ===== MODULE 6: Main Facade Class =====
-# In a multi-file implementation, this would be in facade.py
-
-class ConfigFacade:
-    """
-    A simplified configuration interface for Claude automation.
-    
-    Acts as a facade over the more complex ConfigManager, providing
-    domain-specific methods for common configuration operations.
-    """
-    
-    def __init__(self, config_path: Optional[str] = None, config_manager=None, 
-                 session_tracker=None, preserve_original: bool = True, 
-                 strict_mode: bool = False, cache_ttl: int = 60):
-        """
-        Initialize the configuration facade.
-        
-        Args:
-            config_path: Path to configuration file (optional)
-            config_manager: Optional ConfigManager instance
-            session_tracker: Optional SessionTracker instance
-            preserve_original: Whether to preserve original config when saving
-            strict_mode: Whether to raise exceptions on validation errors
-            cache_ttl: Cache time-to-live in seconds
-        """
-        self.config_path = config_path or "config/user_config.yaml"
-        self.preserve_original = preserve_original
-        self.strict_mode = strict_mode
-        
-        # Initialize caching system
-        self._cache = CacheManager(cache_ttl)
-        
-        # Initialize the underlying configuration manager
-        if config_manager:
-            self.config_manager = config_manager
-        else:
-            try:
-                from src.utils.config_manager import ConfigManager
-                self.config_manager = ConfigManager(self.config_path)
-            except ImportError:
-                logging.warning("Main ConfigManager not available, using fallback implementation")
-                self.config_manager = SimpleConfigManager(self.config_path)
-        
-        # Initialize session tracker for progress monitoring
-        if session_tracker:
-            self.session_tracker = session_tracker
-        else:
-            try:
-                from src.utils.session_tracker import SessionTracker
-                tracker_path = os.path.join(os.path.dirname(self.config_path), "session_status.json")
-                self.session_tracker = SessionTracker(tracker_path)
-            except ImportError:
-                logging.warning("Main SessionTracker not available, using fallback implementation")
-                tracker_path = os.path.join(os.path.dirname(self.config_path), "simple_session_status.json")
-                self.session_tracker = SimpleSessionTracker(tracker_path)
-
-    @contextmanager
-    def session_context(self, session_id: Optional[str] = None):
-        """Context manager for session operations that preserves state."""
-        try:
-            if not self.config_manager.is_in_session_mode():
-                self.config_manager.enter_session_mode(session_id)
-            yield
-        finally:
-            if self.config_manager.is_in_session_mode():
-                self.config_manager.exit_session_mode()
-
-    # ==== Session Handling Methods ====
-    
-    @cached_method()
-    def get_all_sessions(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Get a dictionary of all available sessions.
-        
-        Returns:
-            Dictionary mapping session IDs to session configurations
-        """
-        return self.config_manager.get("sessions", {})
-
-    @cached_method()
-    def get_session_ids(self) -> List[str]:
-        """
-        Get a list of all available session IDs.
-        
-        Returns:
-            List of session IDs
-        """
-        return list(self.get_all_sessions().keys())
-
-    @cached_method()
-    def get_session_config(self, session_id: str) -> Union[SessionConfig, Dict[str, Any]]:
-        """
-        Get the configuration for a specific session.
-        
-        Args:
-            session_id: The session identifier
-            
-        Returns:
-            SessionConfig object or empty dict if not found
-            
-        Raises:
-            SessionConfigError: If session config is invalid and strict_mode is enabled
-        """
-        # Handle default session specially
-        if session_id == "default":
-            return self._get_default_session_config()
-        
-        # Get session data
-        session_data = self.config_manager.get("sessions", {}).get(session_id, {})
-        
-        # Validate session configuration
-        validation_result = ConfigValidator.validate_session_config(session_id, session_data)
-        
-        if not validation_result.valid:
-            if self.strict_mode:
-                raise SessionConfigError(f"Invalid session '{session_id}': {'; '.join(validation_result.errors)}")
-            logging.warning(f"Using default values for invalid session '{session_id}': {'; '.join(validation_result.errors)}")
-            return {}
-        
-        # Create SessionConfig and return
-        try:
-            return SessionConfig.from_dict(session_id, session_data)
-        except Exception as e:
-            logging.error(f"Error creating SessionConfig for '{session_id}': {e}")
-            if self.strict_mode:
-                raise
-            return session_data  # Return raw data as fallback
-
-    def _get_default_session_config(self) -> SessionConfig:
-        """
-        Create a default session configuration using global settings.
-        
-        Returns:
-            SessionConfig object
-        """
-        prompts = self.config_manager.get("prompts", [])
-        url = self.config_manager.get("claude_url", "https://claude.ai")
-        delay = self.config_manager.get("delay_between_prompts", 180)
-        
-        return SessionConfig(
-            id="default",
-            name="Default Session",
-            url=url,
-            prompts=prompts,
-            delay=delay
-        )
-
-    def validate_session(self, session_id: str) -> ValidationResult:
-        """
-        Validate a session configuration.
-        
-        Args:
-            session_id: The session identifier
-            
-        Returns:
-            ValidationResult with validation outcome
-        """
-        # Check if session exists
-        if session_id != "default" and session_id not in self.get_session_ids():
-            result = ValidationResult(False)
-            result.add_error(f"Session '{session_id}' not found in configuration")
-            return result
-        
-        # For default session, check global prompts
-        if session_id == "default":
-            prompts = self.config_manager.get("prompts", [])
-            if not prompts:
-                result = ValidationResult(False)
-                result.add_error("No prompts defined in global configuration")
-                return result
-            
-            # Validate prompts
-            return ConfigValidator.validate_prompts(prompts)
-        
-        # Get session configuration
-        session_data = self.config_manager.get("sessions", {}).get(session_id, {})
-        
-        # Validate session configuration
-        return ConfigValidator.validate_session_config(session_id, session_data)
-
-    def is_valid_session(self, session_id: str) -> bool:
-        """
-        Check if a session is valid.
-        
-        Args:
-            session_id: The session identifier
-            
-        Returns:
-            True if session is valid, False otherwise
-        """
-        return self.validate_session(session_id).valid
-
-    @cached_method()
-    def get_claude_url(self, session_id: Optional[str] = None) -> str:
-        """
-        Get the Claude URL for a session or the global default.
-        
-        Args:
-            session_id: The session identifier (optional)
-            
-        Returns:
-            Claude URL string
-        """
-        if session_id and session_id != "default":
-            # Try to get session-specific URL first
-            session_config = self.get_session_config(session_id)
-            if isinstance(session_config, SessionConfig):
-                return session_config.url
-            elif isinstance(session_config, dict):
-                url = session_config.get("claude_url")
-                if url:
-                    return url
-        
-        # Fall back to global URL
-        return self.config_manager.get("claude_url", "https://claude.ai")
-
-    @cached_method()
-    def get_prompts(self, session_id: Optional[str] = None) -> List[str]:
-        """
-        Get the prompts for a session or global prompts.
-        
-        Args:
-            session_id: The session identifier (optional)
-            
-        Returns:
-            List of prompt strings
-        """
-        if session_id and session_id != "default":
-            # Try to get session-specific prompts
-            session_config = self.get_session_config(session_id)
-            if isinstance(session_config, SessionConfig):
-                return session_config.prompts
-            elif isinstance(session_config, dict):
-                prompts = session_config.get("prompts", [])
-                if prompts:
-                    return prompts
-        
-        # Fall back to global prompts
-        return self.config_manager.get("prompts", [])
-    
-    @cached_method()
-    def get_global_prompts(self) -> List[str]:
-        """
-        Get global prompts defined at the root level.
-        
-        Returns:
-            List of prompt strings
-        """
-        return self.config_manager.get("prompts", [])
-
-    def get_session_name(self, session_id: str) -> str:
-        """
-        Get the human-readable name for a session.
-        
-        Args:
-            session_id: The session identifier
-            
-        Returns:
-            Session name (or session_id if no name is defined)
-        """
-        if session_id == "default":
-            return "Default Session"
-            
-        session_config = self.get_session_config(session_id)
-        if isinstance(session_config, SessionConfig):
-            return session_config.name
-        elif isinstance(session_config, dict):
-            return session_config.get("name", session_id)
-        return session_id
-
-    # ==== Configuration Access Methods ====
-    
-    def get_validated_config(self, key: str, validator_func: Callable, 
-                           default: Any = None) -> Any:
-        """
-        Get configuration with validation.
-        
-        Args:
-            key: Configuration key
-            validator_func: Function that validates configuration value
-            default: Default value if key not found or validation fails
-            
-        Returns:
-            Validated configuration value or default
-            
-        Raises:
-            ValidationError: If validation fails and strict_mode is enabled
-        """
-        try:
-            value = self.config_manager.get(key, default)
-            result = validator_func(value)
-            
-            if not result.valid:
-                if self.strict_mode:
-                    raise ValidationError(result.errors)
-                logging.warning(f"Invalid configuration for {key}: {', '.join(result.errors)}")
-                return default
-                
-            return value
-        except Exception as e:
-            if not isinstance(e, ValidationError):
-                logging.error(f"Error accessing configuration {key}: {e}")
-            if self.strict_mode:
-                raise
-            return default
-
-    @cached_method()
-    def get_browser_config(self) -> BrowserConfig:
-        """
-        Get browser configuration.
-        
-        Returns:
-            BrowserConfig object
-        """
-        # Get all config that might be needed for browser configuration
-        config_data = {
-            "browser_profile": self.config_manager.get("browser_profile"),
-            "chrome_path": self.config_manager.get("chrome_path"),
-            "browser_launch_wait": self.config_manager.get("browser_launch_wait", 10)
-        }
-        
-        # Validate browser configuration
-        validation_result = ConfigValidator.validate_browser_config(config_data)
-        if not validation_result.valid and self.strict_mode:
-            raise ValidationError(validation_result.errors)
-        elif not validation_result.valid:
-            logging.warning(f"Invalid browser configuration: {', '.join(validation_result.errors)}. Using defaults.")
-        
-        return BrowserConfig.from_dict(config_data)
-
-    @cached_method()
-    def get_retry_settings(self) -> RetryConfig:
-        """
-        Get retry settings.
-        
-        Returns:
-            RetryConfig object
-        """
-        # Get all retry-related config
-        config_data = {
-            "max_retries": self.config_manager.get("max_retries", 3),
-            "retry_delay": self.config_manager.get("retry_delay", 2),
-            "max_retry_delay": self.config_manager.get("max_retry_delay", 30),
-            "retry_jitter": self.config_manager.get("retry_jitter", 0.5),
-            "retry_backoff": self.config_manager.get("retry_backoff", 1.5)
-        }
-        
-        return RetryConfig.from_dict(config_data)
-
-    @cached_method()
-    def get_visual_config(self) -> VisualConfig:
-        """
-        Get visual verification configuration.
-        
-        Returns:
-            VisualConfig object
-        """
-        # Get all visual verification related config
-        visual_data = self.config_manager.get("visual_verification", {})
-        
-        # Create VisualConfig
-        return VisualConfig.from_dict({"visual_verification": visual_data})
-
-    def get_delay_between_prompts(self, session_id: Optional[str] = None) -> int:
-        """
-        Get the delay between prompts for a session or global default.
-        
-        Args:
-            session_id: The session identifier (optional)
-            
-        Returns:
-            Delay in seconds
-        """
-        if session_id and session_id != "default":
-            # Try to get session-specific delay
-            session_config = self.get_session_config(session_id)
-            if isinstance(session_config, SessionConfig):
-                return session_config.delay
-            elif isinstance(session_config, dict):
-                delay = session_config.get("delay_between_prompts")
-                if delay is not None:
-                    return delay
-        
-        # Fall back to global delay or default
-        return self.config_manager.get("delay_between_prompts", 180)
-
-    def get_template_path(self, template_name: str) -> str:
-        """
-        Get the full path to a template image.
-        
-        Args:
-            template_name: Template image name without extension
-            
-        Returns:
-            Path to template image file
-        """
-        visual_config = self.get_visual_config()
-        template_dir = visual_config.template_dir
-        return os.path.join(template_dir, f"{template_name}.png")
-
-    def get_global_config(self) -> Dict[str, Any]:
-        """
-        Get global configuration settings.
-        
-        Returns:
-            Dictionary with global configuration
-        """
-        config = self.config_manager.get_all() if hasattr(self.config_manager, 'get_all') else {}
-        
-        # Remove sessions key if present
-        if 'sessions' in config:
-            config = config.copy()
-            del config['sessions']
-            
-        return config
-
-    # ==== Session Tracking Methods ====
-    
-    def is_session_complete(self, session_id: str) -> bool:
-        """
-        Check if a session has been marked as complete.
-        
-        Args:
-            session_id: The session identifier
-            
-        Returns:
-            True if session is complete, False otherwise
-        """
-        return self.session_tracker.is_completed(session_id)
-
-    def mark_session_complete(self, session_id: str, success: bool = True, 
-                           notes: Optional[str] = None) -> bool:
-        """
-        Mark a session as complete.
-        
-        Args:
-            session_id: The session identifier
-            success: Whether the session completed successfully
-            notes: Optional notes about the session execution
-            
-        Returns:
-            True if status was successfully saved
-        """
-        return self.session_tracker.mark_completed(session_id, success, notes)
-
-    def reset_session(self, session_id: str) -> bool:
-        """
-        Reset a session's completion status.
-        
-        Args:
-            session_id: The session identifier
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        return self.session_tracker.reset_session(session_id)
-
-    def get_incomplete_sessions(self) -> List[str]:
-        """
-        Get a list of sessions that haven't been completed.
-        
-        Returns:
-            List of session IDs
-        """
-        all_sessions = self.get_all_sessions()
-        return [s for s in all_sessions if not self.is_session_complete(s)]
-
-    def get_session_status(self, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Get status information for a session or all sessions.
-        
-        Args:
-            session_id: The session identifier (optional)
-            
-        Returns:
-            Dictionary with session status information
-        """
-        if hasattr(self.session_tracker, 'get_session_status'):
-            # Use main SessionTracker implementation
-            return self.session_tracker.get_session_status(session_id)
-        elif isinstance(self.session_tracker, SimpleSessionTracker):
-            # Use fallback implementation
-            if session_id:
-                return self.session_tracker.session_status.get(session_id, {})
-            else:
-                return self.session_tracker.session_status
-        else:
-            # Unknown implementation, return empty result
-            return {} if session_id else {}
-
-    def save(self) -> bool:
-        """
-        Save any changes to the configuration.
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            with self.session_context():
-                return self.config_manager.save()
-        except Exception as e:
-            logging.error(f"Error saving configuration: {e}")
-            return False
-    
-    # ==== Factory Methods ====
-    
-    @classmethod
-    def create(cls, config_path: Optional[str] = None, strict_mode: bool = False) -> 'ConfigFacade':
-        """
-        Factory method to create a properly configured instance.
-        
-        Args:
-            config_path: Path to config file (optional)
-            strict_mode: Whether to enable strict validation mode
-        
-        Returns:
-            ConfigFacade instance
-        """
-        instance = cls(config_path, strict_mode=strict_mode)
-        
-        # Preload commonly used configurations to prime the cache
-        try:
-            instance.get_browser_config()
-            instance.get_retry_settings()
-            instance.get_visual_config()
-            instance.get_session_ids()
-            instance.get_global_prompts()
-        except Exception as e:
-            logging.warning(f"Error preloading configuration: {e}")
-        
-        return instance
-
-
-# ===== MODULE 7: Backwards Compatibility ====
-# In a multi-file implementation, this would be in __init__.py
-
-# Alias for backwards compatibility
-SimpleConfig = ConfigFacade
-SimpleConfigFacade = ConfigFacade
+# Compatibility alias for backward compatibility
+SimpleConfig = SimpleConfigFacade

@@ -7,6 +7,20 @@ from pathlib import Path
 from src.models.ui_element import UIElement
 from src.automation.recognition import find_element, wait_for_visual_change
 
+# Import shared utilities
+from src.utils.browser_core import (
+    get_chrome_path as core_get_chrome_path,
+    close_browser_process,
+    verify_browser_closed as core_verify_browser_closed
+)
+from src.utils.constants import (
+    DEFAULT_BROWSER_LAUNCH_WAIT,
+    DEFAULT_BROWSER_READY_TIMEOUT,
+    BROWSER_CLOSE_WAIT_TIME,
+    PAGE_REFRESH_DELAY
+)
+from src.utils.config_base import get_browser_config
+
 def launch_browser(url, config=None):
     """
     Launch a browser instance for Claude automation.
@@ -19,19 +33,15 @@ def launch_browser(url, config=None):
         True if browser launched successfully, False otherwise
     """
     try:
-        # Use configuration if provided, otherwise use defaults
-        if config:
-            chrome_path = config.get("chrome_path", "")
-            profile_dir = config.get("browser_profile", "")
-            startup_wait = config.get("browser_launch_wait", 10)
-        else:
-            chrome_path = ""
-            profile_dir = os.path.join(os.path.expanduser("~"), "ClaudeProfile")
-            startup_wait = 10
+        # Use standardized configuration handling
+        browser_config = get_browser_config(config)
+        chrome_path = browser_config.chrome_path
+        profile_dir = browser_config.profile_dir
+        startup_wait = browser_config.startup_wait
         
-        # Determine browser path based on platform if not in config
+        # Use shared Chrome path finder if not in config
         if not chrome_path:
-            chrome_path = get_chrome_path()
+            chrome_path = core_get_chrome_path()
             if not chrome_path:
                 logging.error("Could not find Chrome browser")
                 return False
@@ -76,32 +86,8 @@ def get_chrome_path():
     Returns:
         Path to Chrome executable or None if not found
     """
-    system = platform.system()
-    
-    if system == "Windows":
-        paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\Application\chrome.exe")
-        ]
-    elif system == "Darwin":  # macOS
-        paths = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        ]
-    else:  # Linux and others
-        paths = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium"
-        ]
-    
-    # Return the first path that exists
-    for path in paths:
-        if os.path.exists(path):
-            return path
-    
-    return None
+    # Use shared implementation
+    return core_get_chrome_path()
 
 def close_browser():
     """
@@ -112,19 +98,12 @@ def close_browser():
     """
     try:
         logging.info("Attempting to close browser")
-        system = platform.system()
         
-        if system == "Windows":
-            subprocess.run(["taskkill", "/f", "/im", "chrome.exe"], 
-                          stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(["pkill", "-f", "chrome"], 
-                          stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
+        # Use shared browser closing logic
+        success = close_browser_process()
         
         # Allow time for browsers to close
-        time.sleep(2)
+        time.sleep(BROWSER_CLOSE_WAIT_TIME)
         
         # Verify browser is closed
         is_closed = verify_browser_closed()
@@ -147,31 +126,15 @@ def verify_browser_closed():
         True if browser is closed, False if still running
     """
     try:
-        system = platform.system()
-        
-        if system == "Windows":
-            # Check for chrome.exe process on Windows
-            result = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq chrome.exe"], 
-                capture_output=True, 
-                text=True
-            )
-            return "chrome.exe" not in result.stdout
-        else:
-            # Check for chrome process on Unix systems
-            result = subprocess.run(
-                ["pgrep", "-f", "chrome"], 
-                capture_output=True, 
-                text=True
-            )
-            return result.stdout.strip() == ""
+        # Use shared verification logic
+        return core_verify_browser_closed()
     
     except Exception as e:
         logging.error(f"Error verifying browser closure: {e}")
         # If verification fails, assume browser may still be running
         return False
 
-def check_browser_ready(ui_element, timeout=30):
+def check_browser_ready(ui_element, timeout=DEFAULT_BROWSER_READY_TIMEOUT):
     """
     Check if the browser is fully loaded and ready for interaction.
     
@@ -203,4 +166,4 @@ def refresh_page():
     from pyautogui import hotkey
     logging.info("Refreshing page")
     hotkey('f5')
-    time.sleep(5)  # Wait for page to reload
+    time.sleep(PAGE_REFRESH_DELAY)  # Wait for page to reload
